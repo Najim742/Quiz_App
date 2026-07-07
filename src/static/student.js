@@ -4,6 +4,7 @@ let ws = null;
 let roll = '';
 let name = '';
 let semester = '';
+let registrationNumber = '';
 let sessionId = null;
 let timerInterval = null;
 let quizStartTime = 0;
@@ -42,11 +43,12 @@ function switchView(viewId) {
 joinForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const code = joinCodeInput.value.trim();
+  registrationNumber = document.getElementById('join-registration-number').value.trim();
   roll = document.getElementById('join-roll').value.trim();
   name = document.getElementById('join-name').value.trim();
   semester = document.getElementById('join-semester').value.trim();
   
-  if (!code || !roll || !name || !semester) return;
+  if (!code || !registrationNumber || !roll || !name || !semester) return;
   
   try {
     // Fetch session details
@@ -75,7 +77,7 @@ function connectWS() {
   ws.onopen = () => {
     ws.send(JSON.stringify({
       type: 'client:join',
-      payload: { roll, name, semester }
+      payload: { registrationNumber, roll, name, semester }
     }));
   };
   
@@ -199,6 +201,7 @@ function submitQuiz(timedOut) {
   
   const payload = {
     sessionId,
+    registrationNumber,
     roll,
     name,
     semester,

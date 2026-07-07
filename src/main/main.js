@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { startServer, stopServer } = require('../server/server');
 const os = require('os');
 const { dbApi, initDb } = require('../server/db');
@@ -79,12 +80,16 @@ app.whenReady().then(async () => {
       return await dbApi.getQuizById(id);
     });
     
-    ipcMain.handle('db:createQuiz', async (_, quizData) => {
-      return await dbApi.createQuiz(quizData);
+    ipcMain.handle('db:createQuiz', async (_, title, duration, semester, session) => {
+      return await dbApi.createQuiz(title, duration, semester, session);
     });
     
     ipcMain.handle('db:deleteQuiz', async (_, id) => {
       return await dbApi.deleteQuiz(id);
+    });
+
+    ipcMain.handle('db:addQuestion', async (_, quizId, text, opt_a, opt_b, opt_c, opt_d, correct_opt) => {
+      return await dbApi.addQuestion(quizId, text, opt_a, opt_b, opt_c, opt_d, correct_opt);
     });
     
     ipcMain.handle('db:getSessionsHistory', async () => {
@@ -93,6 +98,44 @@ app.whenReady().then(async () => {
     
     ipcMain.handle('db:getSubmissionsBySession', async (_, sessionId) => {
       return await dbApi.getSubmissionsBySession(sessionId);
+    });
+
+    // CSV export handler
+    ipcMain.handle('export-csv', async (_, sessionId) => {
+      try {
+        const submissions = await dbApi.getSubmissionsBySession(sessionId);
+        
+        // Create CSV content
+        const headers = ['Registration Number', 'Roll Number', 'Name', 'Semester', 'Score'];
+        const csvLines = [headers.join(',')];
+        
+        submissions.forEach(sub => {
+          csvLines.push([
+            sub.registration_number || '',
+            sub.roll,
+            `"${sub.name.replace(/"/g, '""')}"`, // Escape quotes in name
+            sub.semester || '',
+            sub.score
+          ].join(','));
+        });
+        
+        const csvContent = csvLines.join('\n');
+        
+        // Show save dialog
+        const { filePath } = await dialog.showSaveDialog(mainWindow, {
+          title: 'Save CSV',
+          defaultPath: `session_${sessionId}_results.csv`,
+          filters: [{ name: 'CSV Files', extensions: ['csv'] }]
+        });
+        
+        if (!filePath) return false; // User cancelled
+        
+        fs.writeFileSync(filePath, csvContent);
+        return true;
+      } catch (err) {
+        console.error('CSV export error:', err);
+        return false;
+      }
     });
 
     createWindow();

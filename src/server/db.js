@@ -35,7 +35,8 @@ async function initDb() {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             duration INTEGER DEFAULT 60,
-            semester TEXT
+            semester TEXT,
+            session TEXT
           )`, (err) => {
             if (err) rej(err);
             else res();
@@ -47,6 +48,17 @@ async function initDb() {
         if (!quizSemesterExists) {
           await new Promise((res, rej) => {
             db.run(`ALTER TABLE quizzes ADD COLUMN semester TEXT`, (err) => {
+              if (err) rej(err);
+              else res();
+            });
+          });
+        }
+
+        // Add session column to quizzes if not exists
+        const quizSessionExists = await columnExists('quizzes', 'session');
+        if (!quizSessionExists) {
+          await new Promise((res, rej) => {
+            db.run(`ALTER TABLE quizzes ADD COLUMN session TEXT`, (err) => {
               if (err) rej(err);
               else res();
             });
@@ -115,6 +127,17 @@ async function initDb() {
           });
         }
 
+        // Add registration_number column to submissions if not exists
+        const subRegistrationNumberExists = await columnExists('submissions', 'registration_number');
+        if (!subRegistrationNumberExists) {
+          await new Promise((res, rej) => {
+            db.run(`ALTER TABLE submissions ADD COLUMN registration_number TEXT`, (err) => {
+              if (err) rej(err);
+              else res();
+            });
+          });
+        }
+
         console.log('Database initialized successfully at', dbPath);
         resolve();
       } catch (err) {
@@ -136,9 +159,9 @@ const dbApi = {
     });
   },
 
-  createQuiz: (title, duration, semester) => {
+  createQuiz: (title, duration, semester, session) => {
     return new Promise((resolve, reject) => {
-      db.run(`INSERT INTO quizzes (title, duration, semester) VALUES (?, ?, ?)`, [title, duration, semester], function(err) {
+      db.run(`INSERT INTO quizzes (title, duration, semester, session) VALUES (?, ?, ?, ?)`, [title, duration, semester, session], function(err) {
         if (err) reject(err);
         else resolve(this.lastID);
       });
@@ -213,13 +236,14 @@ const dbApi = {
     });
   },
 
-  addSubmission: (sessionId, roll, name, semester, answersStr, score, timedOut) => {
+  addSubmission: (sessionId, registrationNumber, roll, name, semester, answersStr, score, timedOut) => {
     return new Promise((resolve, reject) => {
-      db.run(`INSERT INTO submissions (session_id, roll, name, semester, answers, score, timed_out) VALUES (?, ?, ?, ?, ?, ?, ?)`, [sessionId, roll, name, semester, answersStr, score, timedOut], function(err) {
+      db.run(`INSERT INTO submissions (session_id, registration_number, roll, name, semester, answers, score, timed_out) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [sessionId, registrationNumber, roll, name, semester, answersStr, score, timedOut], function(err) {
         if (err) reject(err);
         else resolve({
           id: this.lastID,
           session_id: sessionId,
+          registration_number: registrationNumber,
           roll,
           name,
           semester,

@@ -199,8 +199,11 @@ async function loadHistory() {
   }).join('');
 }
 
-window.exportSession = function(sessionId) {
-  window.location.href = `http://localhost:${serverPort}/api/sessions/${sessionId}/export`;
+window.exportSession = async function(sessionId) {
+  const success = await ipcRenderer.invoke('export-csv', sessionId);
+  if (success) {
+    alert('CSV exported successfully!');
+  }
 };
 
 window.viewSessionResults = async function(sessionId, title) {
@@ -213,7 +216,7 @@ window.viewSessionResults = async function(sessionId, title) {
   tbody.innerHTML = '';
   
   if (submissions.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">No submissions found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 20px;">No submissions found.</td></tr>';
   } else {
     submissions.forEach(sub => {
       const tr = document.createElement('tr');
@@ -221,6 +224,7 @@ window.viewSessionResults = async function(sessionId, title) {
       const statusText = sub.timed_out ? 'Timeout' : 'Submitted';
       
       tr.innerHTML = `
+        <td>${sub.registration_number || 'N/A'}</td>
         <td>${sub.roll}</td>
         <td>${sub.name}${sub.semester ? ` (${sub.semester})` : ''}</td>
         <td>${sub.semester || 'N/A'}</td>
@@ -275,9 +279,16 @@ async function loadQuizzes() {
     const card = document.createElement('div');
     card.className = 'quiz-card';
     const durationMinutes = Math.round(quiz.duration / 60);
+    let detailsHtml = `<p>Duration: ${durationMinutes}m</p>`;
+    if (quiz.semester) {
+      detailsHtml += `<p><small>Semester: ${quiz.semester}</small></p>`;
+    }
+    if (quiz.session) {
+      detailsHtml += `<p><small>Session: ${quiz.session}</small></p>`;
+    }
     card.innerHTML = `
       <h3>${quiz.title}</h3>
-      <p>Duration: ${durationMinutes}m</p>
+      ${detailsHtml}
       <div class="card-actions">
         <button class="btn btn-primary" onclick="openStartSessionModal(${quiz.id}, '${quiz.title.replace(/'/g, "\\'")}')">Start Session</button>
         <button class="btn btn-danger" onclick="deleteQuiz(${quiz.id})">Delete</button>
@@ -339,15 +350,17 @@ async function saveQuiz() {
   const title = document.getElementById('new-quiz-title').value;
   const durationMinutes = document.getElementById('new-quiz-duration').value;
   const semester = document.getElementById('new-quiz-semester').value;
+  const session = document.getElementById('new-quiz-session').value;
   
   if (!title) return alert('Enter a title');
   
-  const quizRes = await apiPost('/quizzes', { 
+  const quizId = await ipcRenderer.invoke(
+    'db:createQuiz', 
     title, 
-    duration: parseInt(durationMinutes) * 60, 
-    semester 
-  }); // Convert minutes to seconds
-  const quizId = quizRes.id;
+    parseInt(durationMinutes) * 60, 
+    semester, 
+    session
+  );
   
   const items = document.querySelectorAll('.question-item');
   for (let i = 0; i < items.length; i++) {
@@ -360,15 +373,26 @@ async function saveQuiz() {
     const correct_opt = item.querySelector(`input[name="correct-${i}"]:checked`).value;
     
     if (text) {
-      await apiPost(`/quizzes/${quizId}/questions`, { text, opt_a, opt_b, opt_c, opt_d, correct_opt });
+      await ipcRenderer.invoke(
+        'db:addQuestion', 
+        quizId, 
+        text, 
+        opt_a, 
+        opt_b, 
+        opt_c, 
+        opt_d, 
+        correct_opt
+      );
     }
   }
   
   alert('Quiz saved successfully!');
   document.getElementById('new-quiz-title').value = '';
   document.getElementById('new-quiz-semester').value = '';
+  document.getElementById('new-quiz-session').value = '';
   document.getElementById('questions-container').innerHTML = '';
   addQuestionUI();
+  loadQuizzes();
   window.switchView('dashboard');
 }
 
@@ -464,12 +488,12 @@ window.triggerQuizStart = function() {
   updateLiveSessionUI('active'); // Refresh UI to show quiz started state
 }
 
-document.getElementById('export-csv-btn').addEventListener('click', () => {
+document.getElementById('export-csv-btn').addEventListener('click', async () => {
   if (!currentSessionId) return;
-  // This triggers a download in the electron window, we can just use window.open
-  // or fetch and use a blob. Or use Electron's ipc to open a save dialog.
-  // For simplicity, we just navigate to the endpoint which will trigger download.
-  window.location.href = `http://localhost:${serverPort}/api/sessions/${currentSessionId}/export`;
+  const success = await ipcRenderer.invoke('export-csv', currentSessionId);
+  if (success) {
+    alert('CSV exported successfully!');
+  }
 });
 
 // Real-time Updates
@@ -477,7 +501,7 @@ let studentCount = 0;
 function handleStudentJoined(data) {
   const list = document.getElementById('students-list');
   const li = document.createElement('li');
-  li.innerHTML = `<strong>${data.roll}</strong> - ${data.name}${data.semester ? ` (${data.semester})` : ''}`;
+  li.innerHTML = `<strong>${data.registrationNumber || 'N/A'}</strong> (${data.roll}) - ${data.name}${data.semester ? ` (${data.semester})` : ''}`;
   list.appendChild(li);
   
   studentCount++;
@@ -510,8 +534,10 @@ function handleSubmission(sub) {
   const statusText = sub.timed_out ? 'Timeout' : 'Submitted';
   
   tr.innerHTML = `
+    <td>${sub.registration_number || 'N/A'}</td>
     <td>${sub.roll}</td>
-    <td>${sub.name}${sub.semester ? ` (${sub.semester})` : ''}</td>
+    <td>${sub.name}</td>
+    <td>${sub.semester || 'N/A'}</td>
     <td><strong>${sub.score}</strong></td>
     <td><span class="status-badge ${statusClass}">${statusText}</span></td>
   `;

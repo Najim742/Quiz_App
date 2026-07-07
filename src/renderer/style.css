@@ -296,13 +296,16 @@ input[type="text"]:focus, input[type="number"]:focus {
 
 .students-panel {
   padding: 24px;
+  display: flex;
+  flex-direction: column;
 }
 
 .students-list {
   list-style: none;
   margin-top: 16px;
   overflow-y: auto;
-  max-height: 400px;
+  flex: 1;
+  min-height: 0; /* Important for flex children to shrink properly */
 }
 
 .students-list li {

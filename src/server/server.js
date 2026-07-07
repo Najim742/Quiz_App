@@ -123,7 +123,7 @@ async function startServer(port = 3000) {
   // HTTP Fallback for submission
   app.post('/api/submit', async (req, res) => {
     try {
-      const { sessionId, roll, name, semester, answers, timedOut } = req.body;
+      const { sessionId, registrationNumber, roll, name, semester, answers, timedOut } = req.body;
       
       // Calculate score server-side to prevent cheating
       let score = 0;
@@ -144,7 +144,7 @@ async function startServer(port = 3000) {
         console.error("Score calc error in HTTP submit:", e);
       }
       
-      const submission = await dbApi.addSubmission(sessionId, roll, name, semester, JSON.stringify(answers), score, timedOut);
+      const submission = await dbApi.addSubmission(sessionId, registrationNumber, roll, name, semester, JSON.stringify(answers), score, timedOut);
       
       if (teacherWs && teacherWs.readyState === WebSocket.OPEN) {
         teacherWs.send(JSON.stringify({ type: 'server:submission', payload: submission }));
@@ -185,12 +185,11 @@ async function startServer(port = 3000) {
       const csvWriter = createObjectCsvWriter({
         path: exportPath,
         header: [
+          { id: 'registration_number', title: 'Registration Number' },
           { id: 'roll', title: 'Roll Number' },
           { id: 'name', title: 'Name' },
           { id: 'semester', title: 'Semester' },
-          { id: 'score', title: 'Score' },
-          { id: 'timed_out', title: 'Timed Out' },
-          { id: 'answers', title: 'Answers JSON' }
+          { id: 'score', title: 'Score' }
         ]
       });
 
@@ -373,6 +372,7 @@ async function startServer(port = 3000) {
 
             const submission = await dbApi.addSubmission(
               data.payload.sessionId, 
+              data.payload.registrationNumber,
               data.payload.roll, 
               data.payload.name, 
               data.payload.semester,
