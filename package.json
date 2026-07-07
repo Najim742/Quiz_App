@@ -1,16 +1,52 @@
 {
-  "name": "test",
+  "name": "quiz-master",
   "version": "1.0.0",
-  "description": "",
+  "description": "LAN Quiz System - Teacher Panel",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron . --no-sandbox",
-    "build": "electron-builder"
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "quiz",
+    "lan",
+    "education"
+  ],
+  "author": {
+    "name": "Najim",
+    "email": "najimchowdhury742@gmail.com"
+  },
   "license": "ISC",
   "type": "commonjs",
+  "build": {
+    "appId": "com.najim.quizmaster",
+    "productName": "Quiz Master",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+      
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Education",
+      "maintainer": "Najim <najimchowdhury742@gmail.com>"
+     
+    }
+  },
   "dependencies": {
     "cors": "^2.8.6",
     "csv-writer": "^1.6.0",
@@ -20,6 +56,6 @@
   },
   "devDependencies": {
     "electron": "^41.2.2",
-    "electron-builder": "^26.8.1"
+    "electron-builder": "^24.13.3"
   }
 }
