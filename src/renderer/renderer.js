@@ -51,9 +51,13 @@ function updateServerStatusUI(isRunning) {
 
 // Initialize
 async function init() {
-  const info = await ipcRenderer.invoke('get-server-info');
-  serverIp = info.ip;
-  serverPort = info.port;
+  try {
+    const info = await ipcRenderer.invoke('get-server-info');
+    serverIp = info.ip;
+    serverPort = info.port;
+  } catch (err) {
+    console.error('Failed to get server info:', err);
+  }
   
   // Reset session state
   currentSessionId = null;
@@ -62,12 +66,17 @@ async function init() {
   isQuizStarted = false;
   
   // Get initial server status
-  const serverStatus = await ipcRenderer.invoke('get-server-status');
-  updateServerStatusUI(serverStatus);
-  
-  // Only connect WebSocket if server is already running
-  if (serverStatus) {
-    connectWebSocket();
+  try {
+    const serverStatus = await ipcRenderer.invoke('get-server-status');
+    updateServerStatusUI(serverStatus);
+    
+    // Only connect WebSocket if server is already running
+    if (serverStatus) {
+      connectWebSocket();
+    }
+  } catch (err) {
+    console.error('Failed to get server status:', err);
+    updateServerStatusUI(false);
   }
   
   loadQuizzes();
@@ -94,10 +103,21 @@ window.toggleServer = async function() {
 
 // WebSocket Connection
 function connectWebSocket() {
-  ws = new WebSocket(`ws://localhost:${serverPort}`);
+  try {
+    ws = new WebSocket(`ws://localhost:${serverPort}`);
+  } catch (err) {
+    console.error('Failed to create WebSocket:', err);
+    setTimeout(connectWebSocket, 3000);
+    return;
+  }
   
   ws.onopen = () => {
-    ws.send(JSON.stringify({ type: 'teacher:register' }));
+    try {
+      ws.send(JSON.stringify({ type: 'teacher:register' }));
+      console.log('Teacher registered with server');
+    } catch (err) {
+      console.error('Failed to register teacher:', err);
+    }
   };
   
   ws.onmessage = (event) => {
@@ -279,18 +299,25 @@ async function loadQuizzes() {
     const card = document.createElement('div');
     card.className = 'quiz-card';
     const durationMinutes = Math.round(quiz.duration / 60);
-    let detailsHtml = `<p>Duration: ${durationMinutes}m</p>`;
-    if (quiz.semester) {
-      detailsHtml += `<p><small>Semester: ${quiz.semester}</small></p>`;
-    }
-    if (quiz.session) {
-      detailsHtml += `<p><small>Session: ${quiz.session}</small></p>`;
-    }
+    
+    // Sanitize user inputs to prevent XSS
+    const sanitize = (text) => {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    };
+    
+    const title = sanitize(quiz.title || 'Untitled');
+    const semester = quiz.semester ? sanitize(quiz.semester) : '';
+    const session = quiz.session ? sanitize(quiz.session) : '';
+    
     card.innerHTML = `
-      <h3>${quiz.title}</h3>
-      ${detailsHtml}
+      <h3>${title}</h3>
+      <p>Duration: ${durationMinutes}m</p>
+      ${semester ? `<p><small>Semester: ${semester}</small></p>` : ''}
+      ${session ? `<p><small>Session: ${session}</small></p>` : ''}
       <div class="card-actions">
-        <button class="btn btn-primary" onclick="openStartSessionModal(${quiz.id}, '${quiz.title.replace(/'/g, "\\'")}')">Start Session</button>
+        <button class="btn btn-primary" onclick="openStartSessionModal(${quiz.id}, '${title.replace(/'/g, "\\'")}')">Start Session</button>
         <button class="btn btn-danger" onclick="deleteQuiz(${quiz.id})">Delete</button>
       </div>
     `;
@@ -307,14 +334,26 @@ async function deleteQuiz(id) {
 
 // Quiz Builder
 function setupQuizBuilder() {
-  document.getElementById('add-question-btn').addEventListener('click', addQuestionUI);
-  document.getElementById('save-quiz-btn').addEventListener('click', saveQuiz);
+  const addBtn = document.getElementById('add-question-btn');
+  const saveBtn = document.getElementById('save-quiz-btn');
+  
+  if (addBtn) addBtn.addEventListener('click', addQuestionUI);
+  if (saveBtn) saveBtn.addEventListener('click', saveQuiz);
+  
   // Add one default question
   addQuestionUI();
+  
+  // Ensure form inputs are interactive
+  ensureFormInputsActive();
 }
 
 function addQuestionUI() {
   const container = document.getElementById('questions-container');
+  if (!container) {
+    console.error('Questions container not found');
+    return;
+  }
+  
   const index = container.children.length;
   
   const qDiv = document.createElement('div');
@@ -322,87 +361,159 @@ function addQuestionUI() {
   qDiv.innerHTML = `
     <div class="form-group">
       <label>Question Text</label>
-      <input type="text" class="q-text" placeholder="What is 2 + 2?">
+      <input type="text" class="q-text" placeholder="What is 2 + 2?" autocomplete="off">
     </div>
     <div class="options-grid">
       <div class="option-input">
         <input type="radio" name="correct-${index}" value="a" checked>
-        <input type="text" class="q-opt-a" placeholder="Option A">
+        <input type="text" class="q-opt-a" placeholder="Option A" autocomplete="off">
       </div>
       <div class="option-input">
         <input type="radio" name="correct-${index}" value="b">
-        <input type="text" class="q-opt-b" placeholder="Option B">
+        <input type="text" class="q-opt-b" placeholder="Option B" autocomplete="off">
       </div>
       <div class="option-input">
         <input type="radio" name="correct-${index}" value="c">
-        <input type="text" class="q-opt-c" placeholder="Option C">
+        <input type="text" class="q-opt-c" placeholder="Option C" autocomplete="off">
       </div>
       <div class="option-input">
         <input type="radio" name="correct-${index}" value="d">
-        <input type="text" class="q-opt-d" placeholder="Option D">
+        <input type="text" class="q-opt-d" placeholder="Option D" autocomplete="off">
       </div>
     </div>
   `;
   container.appendChild(qDiv);
+  
+  // Ensure newly added inputs are interactive
+  ensureFormInputsActive();
+}
+
+// Helper function to ensure all form inputs are interactive
+function ensureFormInputsActive() {
+  const inputs = document.querySelectorAll('.question-item input[type="text"], #new-quiz-title, #new-quiz-duration, #new-quiz-semester, #new-quiz-session');
+  inputs.forEach(input => {
+    // Ensure inputs are not blocked by any overlay
+    input.style.pointerEvents = 'auto';
+    input.style.position = 'relative';
+    input.style.zIndex = '1';
+  });
 }
 
 async function saveQuiz() {
-  const title = document.getElementById('new-quiz-title').value;
+  const title = document.getElementById('new-quiz-title').value.trim();
   const durationMinutes = document.getElementById('new-quiz-duration').value;
-  const semester = document.getElementById('new-quiz-semester').value;
-  const session = document.getElementById('new-quiz-session').value;
+  const semester = document.getElementById('new-quiz-semester').value.trim();
+  const session = document.getElementById('new-quiz-session').value.trim();
   
-  if (!title) return alert('Enter a title');
-  
-  const quizId = await ipcRenderer.invoke(
-    'db:createQuiz', 
-    title, 
-    parseInt(durationMinutes) * 60, 
-    semester, 
-    session
-  );
+  // Validation
+  if (!title) {
+    alert('Quiz title is required');
+    return;
+  }
+  if (title.length > 200) {
+    alert('Quiz title is too long (max 200 characters)');
+    return;
+  }
+  if (!durationMinutes || parseInt(durationMinutes) < 1 || parseInt(durationMinutes) > 1440) {
+    alert('Duration must be between 1 and 1440 minutes');
+    return;
+  }
   
   const items = document.querySelectorAll('.question-item');
+  let hasValidQuestion = false;
+  
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    const text = item.querySelector('.q-text').value;
-    const opt_a = item.querySelector('.q-opt-a').value;
-    const opt_b = item.querySelector('.q-opt-b').value;
-    const opt_c = item.querySelector('.q-opt-c').value;
-    const opt_d = item.querySelector('.q-opt-d').value;
-    const correct_opt = item.querySelector(`input[name="correct-${i}"]:checked`).value;
+    const text = item.querySelector('.q-text').value.trim();
+    const opt_a = item.querySelector('.q-opt-a').value.trim();
+    const opt_b = item.querySelector('.q-opt-b').value.trim();
+    const opt_c = item.querySelector('.q-opt-c').value.trim();
+    const opt_d = item.querySelector('.q-opt-d').value.trim();
     
     if (text) {
-      await ipcRenderer.invoke(
-        'db:addQuestion', 
-        quizId, 
-        text, 
-        opt_a, 
-        opt_b, 
-        opt_c, 
-        opt_d, 
-        correct_opt
-      );
+      // Validate question content
+      if (text.length > 500) {
+        alert(`Question ${i + 1} text is too long (max 500 characters)`);
+        return;
+      }
+      if (!opt_a || !opt_b || !opt_c || !opt_d) {
+        alert(`Question ${i + 1}: All options must be filled`);
+        return;
+      }
+      const optionLength = Math.max(opt_a.length, opt_b.length, opt_c.length, opt_d.length);
+      if (optionLength > 200) {
+        alert(`Question ${i + 1}: Option text is too long (max 200 characters)`);
+        return;
+      }
+      hasValidQuestion = true;
     }
   }
   
-  alert('Quiz saved successfully!');
-  document.getElementById('new-quiz-title').value = '';
-  document.getElementById('new-quiz-semester').value = '';
-  document.getElementById('new-quiz-session').value = '';
-  document.getElementById('questions-container').innerHTML = '';
-  addQuestionUI();
-  loadQuizzes();
-  window.switchView('dashboard');
+  if (!hasValidQuestion) {
+    alert('Please add at least one valid question');
+    return;
+  }
+  
+  try {
+    const quizId = await ipcRenderer.invoke(
+      'db:createQuiz', 
+      title, 
+      parseInt(durationMinutes) * 60, 
+      semester || null, 
+      session || null
+    );
+    
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const text = item.querySelector('.q-text').value.trim();
+      const opt_a = item.querySelector('.q-opt-a').value.trim();
+      const opt_b = item.querySelector('.q-opt-b').value.trim();
+      const opt_c = item.querySelector('.q-opt-c').value.trim();
+      const opt_d = item.querySelector('.q-opt-d').value.trim();
+      const correct_opt = item.querySelector(`input[name="correct-${i}"]:checked`).value;
+      
+      if (text) {
+        await ipcRenderer.invoke(
+          'db:addQuestion', 
+          quizId, 
+          text, 
+          opt_a, 
+          opt_b, 
+          opt_c, 
+          opt_d, 
+          correct_opt
+        );
+      }
+    }
+    
+    alert('Quiz saved successfully!');
+    document.getElementById('new-quiz-title').value = '';
+    document.getElementById('new-quiz-semester').value = '';
+    document.getElementById('new-quiz-session').value = '';
+    document.getElementById('new-quiz-duration').value = '5';
+    document.getElementById('questions-container').innerHTML = '';
+    addQuestionUI();
+    loadQuizzes();
+    window.switchView('dashboard');
+  } catch (err) {
+    console.error('Error saving quiz:', err);
+    alert('Error saving quiz: ' + (err.message || 'Unknown error'));
+  }
 }
 
 // Session Management
 let pendingQuizId = null;
 
 window.openStartSessionModal = function(quizId, title) {
+  // Check if server is running
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    alert('Server is not running. Please click "Start Server" to begin.');
+    return;
+  }
+  
   pendingQuizId = quizId;
   document.getElementById('modal-quiz-title').textContent = `Starting: ${title}`;
-  document.getElementById('session-code-input').value = Math.floor(1000 + Math.random() * 9000).toString();
+  document.getElementById('session-code-input').value = Math.floor(100000 + Math.random() * 900000).toString();
   document.getElementById('start-session-modal').classList.add('active');
 }
 
@@ -482,10 +593,36 @@ window.stopSession = function() {
 }
 
 window.triggerQuizStart = function() {
-  if (!currentSessionId || !currentSessionCode || isQuizStarted) return;
-  ws.send(JSON.stringify({ type: 'session:trigger_start', payload: { code: currentSessionCode } }));
-  isQuizStarted = true;
-  updateLiveSessionUI('active'); // Refresh UI to show quiz started state
+  // Validate all required conditions
+  if (!currentSessionId) {
+    console.error('Start Quiz: No session ID');
+    alert('No active session. Please start a session first.');
+    return;
+  }
+  if (!currentSessionCode) {
+    console.error('Start Quiz: No session code');
+    alert('No session code. Please start a session first.');
+    return;
+  }
+  if (isQuizStarted) {
+    console.warn('Quiz already started');
+    return;
+  }
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.error('Start Quiz: WebSocket not connected', ws?.readyState);
+    alert('Server connection lost. Please reconnect.');
+    return;
+  }
+  
+  try {
+    ws.send(JSON.stringify({ type: 'session:trigger_start', payload: { code: currentSessionCode } }));
+    isQuizStarted = true;
+    updateLiveSessionUI('active'); // Refresh UI to show quiz started state
+  } catch (err) {
+    console.error('Error starting quiz:', err);
+    alert('Failed to start quiz. ' + err.message);
+    isQuizStarted = false;
+  }
 }
 
 document.getElementById('export-csv-btn').addEventListener('click', async () => {
