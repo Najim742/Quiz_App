@@ -1,6 +1,6 @@
 {
     "name": "quiz-master",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "LAN Quiz System - Teacher Panel",
     "main": "src/main/main.js",
     "scripts": {
