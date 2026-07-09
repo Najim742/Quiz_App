@@ -224,24 +224,51 @@ async function startServer(port = 3000) {
             
           case 'session:start':
             // data.payload = { code, quizId }
-            sessionJoinsClosed = false; // Reset join status when new session starts
-            quizStartTime = null;
-            quizDuration = 0;
-            if (timerBroadcastInterval) {
-              clearInterval(timerBroadcastInterval);
-              timerBroadcastInterval = null;
+            // Validate input
+            if (!data.payload || !data.payload.code || !data.payload.quizId) {
+              console.error('Invalid session:start payload');
+              ws.send(JSON.stringify({ type: 'error', message: 'Invalid session data' }));
+              break;
             }
-            const sessionId = await dbApi.createSession(data.payload.code, data.payload.quizId);
-            currentSessionId = sessionId;
-            // Get quiz duration
-            const quizzes = await dbApi.getQuizzes();
-            const quiz = quizzes.find(q => q.id === data.payload.quizId);
-            if (quiz) {
-              quizDuration = quiz.duration;
+            
+            // Validate code format (minimum 4 characters, alphanumeric)
+            const code = String(data.payload.code).trim();
+            if (code.length < 4 || code.length > 10) {
+              ws.send(JSON.stringify({ type: 'error', message: 'Session code must be 4-10 characters' }));
+              break;
             }
-            // We NO LONGER broadcast 'session:start' to students here.
-            // Students will wait in lobby. Teacher must trigger it later.
-            ws.send(JSON.stringify({ type: 'session:started', payload: { sessionId, duration: quizDuration } }));
+            
+            try {
+              // Validate quiz exists
+              const allQuizzes = await dbApi.getQuizzes();
+              const selectedQuiz = allQuizzes.find(q => q.id === data.payload.quizId);
+              if (!selectedQuiz) {
+                throw new Error('Quiz not found');
+              }
+              
+              // Validate quiz has questions
+              const quizQuestions = await dbApi.getQuestionsByQuiz(data.payload.quizId);
+              if (quizQuestions.length === 0) {
+                throw new Error('Quiz has no questions');
+              }
+              
+              sessionJoinsClosed = false;
+              quizStartTime = null;
+              quizDuration = selectedQuiz.duration;
+              if (timerBroadcastInterval) {
+                clearInterval(timerBroadcastInterval);
+                timerBroadcastInterval = null;
+              }
+              
+              const sessionId = await dbApi.createSession(code, data.payload.quizId);
+              currentSessionId = sessionId;
+              
+              ws.send(JSON.stringify({ type: 'session:started', payload: { sessionId, duration: quizDuration } }));
+              console.log(`Session ${sessionId} started for quiz ${data.payload.quizId}`);
+            } catch (err) {
+              console.error('Error starting session:', err);
+              ws.send(JSON.stringify({ type: 'error', message: err.message || 'Failed to start session' }));
+            }
             break;
 
           case 'session:close_joins':
@@ -337,7 +364,22 @@ async function startServer(port = 3000) {
             break;
 
           case 'client:join':
-            // payload: { roll, name, semester }
+            // payload: { registrationNumber, roll, name, semester }
+            // Validate input
+            if (!data.payload || !data.payload.roll || !data.payload.name) {
+              ws.send(JSON.stringify({ type: 'server:join_rejected', message: 'Invalid student information.' }));
+              break;
+            }
+            
+            // Validate string lengths to prevent DoS (max 100 chars each)
+            const MAX_FIELD_LENGTH = 100;
+            if ((data.payload.roll && String(data.payload.roll).length > MAX_FIELD_LENGTH) ||
+                (data.payload.name && String(data.payload.name).length > MAX_FIELD_LENGTH) ||
+                (data.payload.semester && String(data.payload.semester).length > MAX_FIELD_LENGTH)) {
+              ws.send(JSON.stringify({ type: 'server:join_rejected', message: 'Student information is too long.' }));
+              break;
+            }
+            
             if (sessionJoinsClosed) {
               // Reject the student
               ws.send(JSON.stringify({ type: 'server:join_rejected', message: 'Joins are closed for this session.' }));
@@ -350,7 +392,13 @@ async function startServer(port = 3000) {
             break;
 
           case 'client:submit':
-            // Calculate score securely
+            // Validate payload structure
+            if (!data.payload || !data.payload.sessionId || !data.payload.answers) {
+              ws.send(JSON.stringify({ type: 'error', message: 'Invalid submission data' }));
+              break;
+            }
+            
+            // Calculate score securely (only count valid answers)
             let score = 0;
             try {
               const sessionRows = await new Promise((res, rej) => {
@@ -358,10 +406,14 @@ async function startServer(port = 3000) {
               });
               if (sessionRows.length > 0) {
                 const questions = await dbApi.getQuestionsByQuiz(sessionRows[0].quiz_id);
+                const validQuestionIds = new Set(questions.map(q => q.id));
                 const answersMap = data.payload.answers; // { questionId: "A", ... }
                 
+                // Only count answers for valid questions with valid option values
                 questions.forEach(q => {
-                  if (answersMap[q.id] === q.correct_opt) {
+                  const submittedAnswer = answersMap[q.id];
+                  // Validate answer is one of the valid options (a,b,c,d)
+                  if (submittedAnswer && ['a', 'b', 'c', 'd'].includes(submittedAnswer) && submittedAnswer === q.correct_opt) {
                     score++;
                   }
                 });
@@ -370,24 +422,29 @@ async function startServer(port = 3000) {
               console.error("Score calc error", e);
             }
 
-            const submission = await dbApi.addSubmission(
-              data.payload.sessionId, 
-              data.payload.registrationNumber,
-              data.payload.roll, 
-              data.payload.name, 
-              data.payload.semester,
-              JSON.stringify(data.payload.answers), 
-              score, 
-              data.payload.timedOut
-            );
-            
-            // Notify teacher
-            if (teacherWs && teacherWs.readyState === WebSocket.OPEN) {
-              teacherWs.send(JSON.stringify({ type: 'server:submission', payload: submission }));
+            try {
+              const submission = await dbApi.addSubmission(
+                data.payload.sessionId, 
+                data.payload.registrationNumber,
+                data.payload.roll, 
+                data.payload.name, 
+                data.payload.semester,
+                JSON.stringify(data.payload.answers), 
+                score, 
+                data.payload.timedOut
+              );
+              
+              // Notify teacher
+              if (teacherWs && teacherWs.readyState === WebSocket.OPEN) {
+                teacherWs.send(JSON.stringify({ type: 'server:submission', payload: submission }));
+              }
+              
+              // Acknowledge student
+              ws.send(JSON.stringify({ type: 'server:submitted', payload: { score } }));
+            } catch (err) {
+              console.error('Error processing submission:', err);
+              ws.send(JSON.stringify({ type: 'error', message: 'Failed to process submission' }));
             }
-            
-            // Acknowledge student
-            ws.send(JSON.stringify({ type: 'server:submitted', payload: { score } }));
             break;
         }
       } catch (err) {

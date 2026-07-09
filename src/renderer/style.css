@@ -165,7 +165,7 @@ h1 {
 
 .quiz-card {
   background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
+  border: 2px solid var(--panel-border);
   border-radius: 12px;
   padding: 24px;
   backdrop-filter: blur(20px) saturate(180%);
@@ -197,11 +197,11 @@ h1 {
 /* Glass Panels */
 .glass-panel {
   background: rgba(255, 255, 255, 0.34);
-  border: 2px solid var(--panel-border);
+  border: 3px solid var(--panel-border);
   border-radius: 16px;
   padding: 32px;
   backdrop-filter: blur(24px) saturate(180%);
-  box-shadow: 0 20px 45px -20px var(--shadow);
+  box-shadow: 0 20px 45px -10px var(--shadow);
 }
 
 /* Forms */
@@ -380,8 +380,8 @@ th {
   display: none;
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(221, 221, 235, 0.72);
-  backdrop-filter: blur(5px);
+  background: rgba(202, 202, 206, 0.72);
+  backdrop-filter: blur(6px);
   z-index: 1000;
   align-items: center;
   justify-content: center;
