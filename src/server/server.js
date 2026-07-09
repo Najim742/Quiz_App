@@ -33,6 +33,43 @@ async function startServer(port = 3000) {
     res.sendFile(path.join(staticPath, 'index.html'));
   });
 
+  // Student auth API
+  app.post('/api/students/signup', async (req, res) => {
+    try {
+      const { registrationNumber, rollNumber, name, semester, sessionYear } = req.body;
+      if (!registrationNumber || !rollNumber || !name || !semester || !sessionYear) {
+        return res.status(400).json({ error: 'All fields are required' });
+      }
+      const student = await dbApi.createStudent(registrationNumber, rollNumber, name, semester, sessionYear);
+      res.json({ success: true, student });
+    } catch (err) {
+      if (err.message.includes('UNIQUE constraint failed')) {
+        res.status(400).json({ error: 'Registration number already exists' });
+      } else {
+          res.status(500).json({ error: err.message });
+        }
+    }
+  });
+
+  app.post('/api/students/login', async (req, res) => {
+    try {
+      const { registrationNumber, sessionYear } = req.body;
+      if (!registrationNumber || !sessionYear) {
+        return res.status(400).json({ error: 'Registration number and session year are required' });
+      }
+      const student = await dbApi.getStudentByRegistrationNumber(registrationNumber);
+      if (!student) {
+        return res.status(404).json({ error: 'Student not found' });
+      }
+      if (student.session_year !== sessionYear) {
+        return res.status(400).json({ error: 'Invalid session year' });
+      }
+      res.json({ success: true, student });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // REST API for Teacher GUI to manage DB
   app.get('/api/quizzes', async (req, res) => {
     try {
@@ -91,11 +128,11 @@ async function startServer(port = 3000) {
     }
   });
 
-  // Student API to fetch quiz data after joining
-  app.get('/api/sessions/:code', async (req, res) => {
+  // Student API to fetch active session
+  app.get('/api/sessions/active', async (req, res) => {
     try {
-      const session = await dbApi.getSessionByCode(req.params.code);
-      if (!session) return res.status(404).json({ error: 'Session not found or inactive' });
+      const session = await dbApi.getActiveSession();
+      if (!session) return res.status(404).json({ error: 'No active session' });
       
       const questions = await dbApi.getQuestionsByQuiz(session.quiz_id);
       // Strip correct answers before sending to students
@@ -110,7 +147,6 @@ async function startServer(port = 3000) {
 
       res.json({
         id: session.id,
-        code: session.code,
         duration: session.duration,
         title: session.title,
         questions: safeQuestions
@@ -123,7 +159,7 @@ async function startServer(port = 3000) {
   // HTTP Fallback for submission
   app.post('/api/submit', async (req, res) => {
     try {
-      const { sessionId, registrationNumber, roll, name, semester, answers, timedOut } = req.body;
+      const { sessionId, studentId, registrationNumber, roll, name, semester, answers, timedOut } = req.body;
       
       // Calculate score server-side to prevent cheating
       let score = 0;
@@ -144,7 +180,7 @@ async function startServer(port = 3000) {
         console.error("Score calc error in HTTP submit:", e);
       }
       
-      const submission = await dbApi.addSubmission(sessionId, registrationNumber, roll, name, semester, JSON.stringify(answers), score, timedOut);
+      const submission = await dbApi.addSubmission(sessionId, studentId, registrationNumber, roll, name, semester, JSON.stringify(answers), score, timedOut);
       
       if (teacherWs && teacherWs.readyState === WebSocket.OPEN) {
         teacherWs.send(JSON.stringify({ type: 'server:submission', payload: submission }));
@@ -223,18 +259,11 @@ async function startServer(port = 3000) {
             break;
             
           case 'session:start':
-            // data.payload = { code, quizId }
+            // data.payload = { quizId }
             // Validate input
-            if (!data.payload || !data.payload.code || !data.payload.quizId) {
+            if (!data.payload || !data.payload.quizId) {
               console.error('Invalid session:start payload');
               ws.send(JSON.stringify({ type: 'error', message: 'Invalid session data' }));
-              break;
-            }
-            
-            // Validate code format (minimum 4 characters, alphanumeric)
-            const code = String(data.payload.code).trim();
-            if (code.length < 4 || code.length > 10) {
-              ws.send(JSON.stringify({ type: 'error', message: 'Session code must be 4-10 characters' }));
               break;
             }
             
@@ -260,7 +289,7 @@ async function startServer(port = 3000) {
                 timerBroadcastInterval = null;
               }
               
-              const sessionId = await dbApi.createSession(code, data.payload.quizId);
+              const sessionId = await dbApi.createSession(data.payload.quizId);
               currentSessionId = sessionId;
               
               ws.send(JSON.stringify({ type: 'session:started', payload: { sessionId, duration: quizDuration } }));
@@ -297,7 +326,6 @@ async function startServer(port = 3000) {
                 c.send(JSON.stringify({ 
                   type: 'session:start', 
                   payload: { 
-                    code: data.payload.code,
                     startTime: quizStartTime,
                     duration: quizDuration
                   }
@@ -364,19 +392,10 @@ async function startServer(port = 3000) {
             break;
 
           case 'client:join':
-            // payload: { registrationNumber, roll, name, semester }
+            // payload: { studentId, registrationNumber, rollNumber, name, semester }
             // Validate input
-            if (!data.payload || !data.payload.roll || !data.payload.name) {
+            if (!data.payload || !data.payload.studentId) {
               ws.send(JSON.stringify({ type: 'server:join_rejected', message: 'Invalid student information.' }));
-              break;
-            }
-            
-            // Validate string lengths to prevent DoS (max 100 chars each)
-            const MAX_FIELD_LENGTH = 100;
-            if ((data.payload.roll && String(data.payload.roll).length > MAX_FIELD_LENGTH) ||
-                (data.payload.name && String(data.payload.name).length > MAX_FIELD_LENGTH) ||
-                (data.payload.semester && String(data.payload.semester).length > MAX_FIELD_LENGTH)) {
-              ws.send(JSON.stringify({ type: 'server:join_rejected', message: 'Student information is too long.' }));
               break;
             }
             
@@ -393,7 +412,7 @@ async function startServer(port = 3000) {
 
           case 'client:submit':
             // Validate payload structure
-            if (!data.payload || !data.payload.sessionId || !data.payload.answers) {
+            if (!data.payload || !data.payload.sessionId || !data.payload.answers || !data.payload.studentId) {
               ws.send(JSON.stringify({ type: 'error', message: 'Invalid submission data' }));
               break;
             }
@@ -425,6 +444,7 @@ async function startServer(port = 3000) {
             try {
               const submission = await dbApi.addSubmission(
                 data.payload.sessionId, 
+                data.payload.studentId,
                 data.payload.registrationNumber,
                 data.payload.roll, 
                 data.payload.name, 

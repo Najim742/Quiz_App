@@ -662,7 +662,6 @@ window.openStartSessionModal = function(quizId, title) {
   
   pendingQuizId = quizId;
   document.getElementById('modal-quiz-title').textContent = `Starting: ${title}`;
-  document.getElementById('session-code-input').value = Math.floor(100000 + Math.random() * 900000).toString();
   document.getElementById('start-session-modal').classList.add('active');
 }
 
@@ -671,11 +670,9 @@ window.closeModal = function() {
 }
 
 document.getElementById('confirm-start-btn').addEventListener('click', () => {
-  const code = document.getElementById('session-code-input').value;
-  currentSessionCode = code;
   ws.send(JSON.stringify({
     type: 'session:start',
-    payload: { code, quizId: pendingQuizId }
+    payload: { quizId: pendingQuizId }
   }));
   closeModal();
   window.switchView('live');

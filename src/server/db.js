@@ -83,11 +83,26 @@ async function initDb() {
           });
         });
 
-        // Sessions table
+        // Students table
+        await new Promise((res, rej) => {
+          db.run(`CREATE TABLE IF NOT EXISTS students (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            registration_number TEXT UNIQUE NOT NULL,
+            roll_number TEXT NOT NULL,
+            name TEXT NOT NULL,
+            semester TEXT NOT NULL,
+            session_year TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`, (err) => {
+            if (err) rej(err);
+            else res();
+          });
+        });
+
+        // Sessions table (remove code column)
         await new Promise((res, rej) => {
           db.run(`CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            code TEXT NOT NULL UNIQUE,
             quiz_id INTEGER,
             status TEXT DEFAULT 'active',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -103,13 +118,16 @@ async function initDb() {
           db.run(`CREATE TABLE IF NOT EXISTS submissions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id INTEGER,
+            student_id INTEGER,
             roll TEXT NOT NULL,
             name TEXT NOT NULL,
             semester TEXT,
+            registration_number TEXT,
             answers TEXT NOT NULL, 
             score INTEGER NOT NULL,
             timed_out BOOLEAN DEFAULT 0,
-            FOREIGN KEY(session_id) REFERENCES sessions(id)
+            FOREIGN KEY(session_id) REFERENCES sessions(id),
+            FOREIGN KEY(student_id) REFERENCES students(id)
           )`, (err) => {
             if (err) rej(err);
             else res();
@@ -138,6 +156,17 @@ async function initDb() {
           });
         }
 
+        // Add student_id column to submissions if not exists
+        const subStudentIdExists = await columnExists('submissions', 'student_id');
+        if (!subStudentIdExists) {
+          await new Promise((res, rej) => {
+            db.run(`ALTER TABLE submissions ADD COLUMN student_id INTEGER`, (err) => {
+              if (err) rej(err);
+              else res();
+            });
+          });
+        }
+
         console.log('Database initialized successfully at', dbPath);
         resolve();
       } catch (err) {
@@ -150,6 +179,34 @@ async function initDb() {
 
 // CRUD operations
 const dbApi = {
+  // Student operations
+  createStudent: (registrationNumber, rollNumber, name, semester, sessionYear) => {
+    return new Promise((resolve, reject) => {
+      db.run(`INSERT INTO students (registration_number, roll_number, name, semester, session_year) 
+              VALUES (?, ?, ?, ?, ?)`, 
+              [registrationNumber, rollNumber, name, semester, sessionYear], function(err) {
+        if (err) reject(err);
+        else resolve({
+          id: this.lastID,
+          registration_number: registrationNumber,
+          roll_number: rollNumber,
+          name,
+          semester,
+          session_year: sessionYear
+        });
+      });
+    });
+  },
+
+  getStudentByRegistrationNumber: (registrationNumber) => {
+    return new Promise((resolve, reject) => {
+      db.get(`SELECT * FROM students WHERE registration_number = ?`, [registrationNumber], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+  },
+
   getQuizzes: () => {
     return new Promise((resolve, reject) => {
       db.all(`SELECT * FROM quizzes`, (err, rows) => {
@@ -221,21 +278,21 @@ const dbApi = {
     });
   },
 
-  createSession: (code, quizId) => {
+  createSession: (quizId) => {
     return new Promise((resolve, reject) => {
       const now = new Date().toISOString(); // UTC ISO string
-      db.run(`INSERT INTO sessions (code, quiz_id, status, created_at) VALUES (?, ?, 'active', ?)`, [code, quizId, now], function(err) {
+      db.run(`INSERT INTO sessions (quiz_id, status, created_at) VALUES (?, 'active', ?)`, [quizId, now], function(err) {
         if (err) reject(err);
         else resolve(this.lastID);
       });
     });
   },
 
-  getSessionByCode: (code) => {
+  getActiveSession: () => {
     return new Promise((resolve, reject) => {
       db.get(`SELECT s.*, q.title, q.duration FROM sessions s 
               JOIN quizzes q ON s.quiz_id = q.id 
-              WHERE s.code = ? AND s.status = 'active'`, [code], (err, row) => {
+              WHERE s.status = 'active'`, (err, row) => {
         if (err) reject(err);
         else resolve(row);
       });
@@ -251,13 +308,14 @@ const dbApi = {
     });
   },
 
-  addSubmission: (sessionId, registrationNumber, roll, name, semester, answersStr, score, timedOut) => {
+  addSubmission: (sessionId, studentId, registrationNumber, roll, name, semester, answersStr, score, timedOut) => {
     return new Promise((resolve, reject) => {
-      db.run(`INSERT INTO submissions (session_id, registration_number, roll, name, semester, answers, score, timed_out) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [sessionId, registrationNumber, roll, name, semester, answersStr, score, timedOut], function(err) {
+      db.run(`INSERT INTO submissions (session_id, student_id, registration_number, roll, name, semester, answers, score, timed_out) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [sessionId, studentId, registrationNumber, roll, name, semester, answersStr, score, timedOut], function(err) {
         if (err) reject(err);
         else resolve({
           id: this.lastID,
           session_id: sessionId,
+          student_id: studentId,
           registration_number: registrationNumber,
           roll,
           name,
