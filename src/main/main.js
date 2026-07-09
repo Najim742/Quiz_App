@@ -112,6 +112,34 @@ app.whenReady().then(async () => {
       return await dbApi.deleteQuizzes(quizIds);
     });
 
+    ipcMain.handle('db:getAllStudents', async () => {
+      return await dbApi.getAllStudents();
+    });
+
+    ipcMain.handle('db:deleteStudent', async (_, id) => {
+      return await dbApi.deleteStudent(id);
+    });
+
+    ipcMain.handle('db:verifyStudent', async (_, id) => {
+      return await dbApi.verifyStudent(id);
+    });
+
+    ipcMain.handle('db:getQuestionsByQuiz', async (_, quizId) => {
+      return await dbApi.getQuestionsByQuiz(quizId);
+    });
+
+    ipcMain.handle('db:getSessionById', async (_, sessionId) => {
+      return await dbApi.getSessionById(sessionId);
+    });
+
+    ipcMain.handle('db:toggleShowAnswers', async (_, sessionId) => {
+      return await dbApi.toggleShowAnswers(sessionId);
+    });
+
+    ipcMain.handle('db:getSessionQuestionsAndAnswers', async (_, sessionId) => {
+      return await dbApi.getSessionQuestionsAndAnswers(sessionId);
+    });
+
     // CSV export handler
     ipcMain.handle('export-csv', async (_, sessionId) => {
       try {

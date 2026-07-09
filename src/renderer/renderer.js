@@ -4,9 +4,11 @@ let serverIp = 'localhost';
 let serverPort = 3000;
 let ws = null;
 let currentSessionId = null;
-let currentSessionCode = null;
+let currentQuizId = null;
 let isJoinsClosed = false;
 let isQuizStarted = false;
+let showAnswersToStudents = false;
+let showTeacherAnswers = false;
 
 // DOM Elements
 const views = document.querySelectorAll('.view');
@@ -178,7 +180,208 @@ window.switchView = function(viewId) {
   
   if (viewId === 'dashboard') loadQuizzes();
   if (viewId === 'history') loadHistory();
+  if (viewId === 'students') loadStudents();
 }
+
+let allStudents = [];
+
+async function loadStudents() {
+  const container = document.getElementById('students-container');
+  
+  allStudents = await ipcRenderer.invoke('db:getAllStudents');
+  
+  if (allStudents.length === 0) {
+    container.innerHTML = '<p class="text-muted">No students registered yet.</p>';
+    return;
+  }
+  
+  // Separate unverified and verified students
+  const unverifiedStudents = allStudents.filter(s => !s.verified);
+  const verifiedStudents = allStudents.filter(s => s.verified);
+  
+  // Group verified students by department + batch + session
+  const grouped = {};
+  verifiedStudents.forEach(student => {
+    const key = `${student.department || 'Uncategorized'}-${student.batch || 'Uncategorized'}-${student.session_year || 'Uncategorized'}`;
+    if (!grouped[key]) {
+      grouped[key] = {
+        dept: student.department || 'Uncategorized',
+        batch: student.batch || 'Uncategorized',
+        session: student.session_year || 'Uncategorized',
+        students: []
+      };
+    }
+    grouped[key].students.push(student);
+  });
+  
+  // Sanitize helper
+  const sanitize = (text) => {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  };
+  
+  let html = '';
+  
+  // Unverified students section
+  if (unverifiedStudents.length > 0) {
+    html += `
+      <div style="margin-bottom: 24px;">
+        <h2 style="margin-bottom: 16px; color: var(--danger);">Unverified Students (${unverifiedStudents.length})</h2>
+        <div class="table-container">
+          <table class="submissions-table">
+            <thead>
+              <tr>
+                <th>Reg No</th>
+                <th>Roll</th>
+                <th>Name</th>
+                <th>Semester</th>
+                <th>Dept</th>
+                <th>Batch</th>
+                <th>Session</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${unverifiedStudents.sort((a,b) => a.full_name.localeCompare(b.full_name)).map(student => `
+                <tr>
+                  <td>${sanitize(student.registration_number || 'N/A')}</td>
+                  <td>${sanitize(student.roll_number || 'N/A')}</td>
+                  <td>${sanitize(student.full_name || 'N/A')}</td>
+                  <td>${sanitize(student.semester || 'N/A')}</td>
+                  <td>${sanitize(student.department || 'N/A')}</td>
+                  <td>${sanitize(student.batch || 'N/A')}</td>
+                  <td>${sanitize(student.session_year || 'N/A')}</td>
+                  <td style="display: flex; gap: 8px;">
+                    <button class="btn btn-success" onclick="window.verifyStudent(${student.id})" style="padding: 4px 8px;">Verify</button>
+                    <button class="btn btn-danger" onclick="window.deleteStudent(${student.id})" style="padding: 4px 8px;">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        <line x1="10" y1="11" x2="10" y2="17"></line>
+                        <line x1="14" y1="11" x2="14" y2="17"></line>
+                      </svg>
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+  
+  // Verified groups section
+  if (Object.keys(grouped).length > 0) {
+    html += `
+      <div>
+        <h2 style="margin-bottom: 16px;">Verified Groups</h2>
+        <div id="students-grid" class="quizzes-grid"></div>
+      </div>
+    `;
+  }
+  
+  container.innerHTML = html;
+  
+  // Render verified groups
+  if (Object.keys(grouped).length > 0) {
+    const grid = document.getElementById('students-grid');
+    Object.keys(grouped).sort().forEach(key => {
+      const group = grouped[key];
+      const card = document.createElement('div');
+      card.className = 'quiz-card';
+      
+      card.innerHTML = `
+        <div>
+          <h3>${sanitize(group.dept)} - Batch ${sanitize(group.batch)}</h3>
+          <p>Session: ${sanitize(group.session)}</p>
+          <p>${group.students.length} student${group.students.length !== 1 ? 's' : ''}</p>
+          <div class="card-actions">
+            <button class="btn btn-primary" onclick="window.viewBatchStudents('${key}')">View Students</button>
+          </div>
+        </div>
+      `;
+      
+      grid.appendChild(card);
+    });
+  }
+}
+
+window.viewBatchStudents = function(key) {
+  const container = document.getElementById('students-container');
+  const group = allStudents.reduce((acc, s) => {
+    const sKey = `${s.department || 'Uncategorized'}-${s.batch || 'Uncategorized'}-${s.session_year || 'Uncategorized'}`;
+    if (sKey === key) {
+      acc.dept = s.department || 'Uncategorized';
+      acc.batch = s.batch || 'Uncategorized';
+      acc.session = s.session_year || 'Uncategorized';
+      acc.students.push(s);
+    }
+    return acc;
+  }, { dept: '', batch: '', session: '', students: [] });
+  
+  // Sanitize
+  const sanitize = (text) => {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  };
+  
+  container.innerHTML = `
+    <button class="btn btn-secondary" onclick="loadStudents()" style="margin-bottom: 16px;">
+      ← Back to Batches
+    </button>
+    <h2 style="margin-bottom: 16px;">${sanitize(group.dept)} - Batch ${sanitize(group.batch)} (Session ${sanitize(group.session)})</h2>
+    <div class="table-container">
+      <table class="submissions-table">
+        <thead>
+          <tr>
+            <th>Reg No</th>
+            <th>Roll</th>
+            <th>Name</th>
+            <th>Semester</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${group.students.sort((a,b) => a.full_name.localeCompare(b.full_name)).map(student => `
+            <tr>
+              <td>${sanitize(student.registration_number || 'N/A')}</td>
+              <td>${sanitize(student.roll_number || 'N/A')}</td>
+              <td>${sanitize(student.full_name || 'N/A')}</td>
+              <td>${sanitize(student.semester || 'N/A')}</td>
+              <td>
+                <button class="btn btn-danger" onclick="window.deleteStudent(${student.id})" style="padding: 4px 8px;">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                  </svg>
+                </button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+};
+
+window.verifyStudent = async function(id) {
+  if (confirm('Are you sure you want to verify this student?')) {
+    await ipcRenderer.invoke('db:verifyStudent', id);
+    loadStudents();
+  }
+};
+
+window.deleteStudent = async function(id) {
+  if (confirm('Are you sure you want to delete this student?')) {
+    await ipcRenderer.invoke('db:deleteStudent', id);
+    loadStudents();
+  }
+};
 
 // History functions
 async function loadHistory() {
@@ -204,33 +407,49 @@ async function loadHistory() {
       hour12: true
     });
     console.log('Session:', session.id, 'Formatted BDT:', date);
-    const lowestScore = session.lowest_score !== null ? session.lowest_score : 'N/A';
-    const highestScore = session.highest_score !== null ? session.highest_score : 'N/A';
     const isSelected = selectedSessions.has(session.id);
     return `
-      <div class="history-item" style="padding: 16px; border-bottom: 1px solid var(--panel-border); display: flex; justify-content: space-between; align-items: center;">
-        <div style="display: flex; gap: 12px; align-items: flex-start; flex: 1;">
-          ${isSelectModeHistory ? `
-            <input type="checkbox" ${isSelected ? 'checked' : ''} 
-              onclick="event.stopPropagation(); window.toggleSessionSelection(${session.id})"
-              style="width: 18px; height: 18px; cursor: pointer; margin-top: 4px;">
-          ` : ''}
-          <div>
-            <h3 style="margin: 0;">${session.title}${session.semester ? ` (${session.semester})` : ''}</h3>
-            <p style="margin: 4px 0 0 0; color: var(--text-muted); font-size: 0.875rem;">
-              ${date} | ${session.submission_count} submissions | Low: ${lowestScore}, High: ${highestScore}
-            </p>
+      <div class="history-item" data-session-id="${session.id}">
+        <div class="history-item-header">
+          <div style="display: flex; gap: 12px; align-items: flex-start; flex: 1;">
+            ${isSelectModeHistory ? `
+              <input type="checkbox" ${isSelected ? 'checked' : ''} 
+                onclick="event.stopPropagation(); window.toggleSessionSelection(${session.id})"
+                style="width: 18px; height: 18px; cursor: pointer; margin-top: 4px;">
+            ` : ''}
+            <div>
+              <h3 style="margin: 0;">${session.title}${session.semester ? ` (${session.semester})` : ''}</h3>
+              <p style="margin: 4px 0 0 0; color: var(--text-muted); font-size: 0.875rem;">
+                ${date}
+              </p>
+            </div>
           </div>
         </div>
         ${!isSelectModeHistory ? `
-          <div style="display: flex; gap: 8px;">
-            <button class="btn btn-secondary" onclick="window.viewSessionResults(${session.id}, '${session.title}')">View Results</button>
-            <button class="btn btn-secondary" onclick="window.exportSession(${session.id})">Export CSV</button>
+          <div class="history-item-actions">
+            <button class="btn btn-secondary" onclick="event.stopPropagation(); window.viewSessionDetails(${session.id}, ${JSON.stringify(session).replace(/"/g, '&quot;')})">Details</button>
+            <button class="btn btn-secondary" onclick="event.stopPropagation(); window.viewSessionResults(${session.id}, '${session.title}')">View Results</button>
+            <button class="btn btn-secondary" onclick="event.stopPropagation(); window.openViewQuestionsModal(${session.quiz_id}, '${session.title}')">See Questions and Answers</button>
+            <button class="btn btn-secondary" onclick="event.stopPropagation(); window.exportSession(${session.id})">Export CSV</button>
           </div>
         ` : ''}
       </div>
     `;
   }).join('');
+
+  // Attach expand listeners to each history item (only when not in select mode)
+  if (!isSelectModeHistory) {
+    document.querySelectorAll('.history-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        // Toggle expanded class
+        item.classList.toggle('expanded');
+      });
+    });
+  }
+}
+
+window.viewSessionDetails = function(sessionId, session) {
+  alert(`Session Details:\nID: ${session.id}\nTitle: ${session.title}\nSemester: ${session.semester || 'N/A'}\nSubmissions: ${session.submission_count}\nLowest Score: ${session.lowest_score !== null ? session.lowest_score : 'N/A'}\nHighest Score: ${session.highest_score !== null ? session.highest_score : 'N/A'}`);
 }
 
 window.deleteSession = async function(sessionId) {
@@ -252,19 +471,24 @@ window.viewSessionResults = async function(sessionId, title) {
   document.getElementById('view-results-title').textContent = `${title} - Results`;
   
   // Fetch submissions
-  const submissions = await ipcRenderer.invoke('db:getSubmissionsBySession', sessionId);
+  let submissions = await ipcRenderer.invoke('db:getSubmissionsBySession', sessionId);
   const tbody = document.getElementById('view-results-body');
   tbody.innerHTML = '';
   
   if (submissions.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 20px;">No submissions found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">No submissions found.</td></tr>';
   } else {
-    submissions.forEach(sub => {
+    // Sort submissions by score descending
+    submissions.sort((a, b) => b.score - a.score);
+    
+    submissions.forEach((sub, index) => {
       const tr = document.createElement('tr');
       const statusClass = sub.timed_out ? 'status-timeout' : 'status-submitted';
       const statusText = sub.timed_out ? 'Timeout' : 'Submitted';
+      const rank = index + 1;
       
       tr.innerHTML = `
+        <td><strong>${rank}</strong></td>
         <td>${sub.registration_number || 'N/A'}</td>
         <td>${sub.roll}</td>
         <td>${sub.name}${sub.semester ? ` (${sub.semester})` : ''}</td>
@@ -464,6 +688,7 @@ async function loadQuizzes() {
           ${detailsHtml}
           ${!isSelectModeDashboard ? `
             <div class="card-actions">
+              <button class="btn btn-secondary" onclick="openViewQuestionsModal(${quiz.id}, '${title.replace(/'/g, "\\'")}')">View Questions</button>
               <button class="btn btn-primary" onclick="openStartSessionModal(${quiz.id}, '${title.replace(/'/g, "\\'")}')">Start Session</button>
             </div>
           ` : ''}
@@ -473,6 +698,41 @@ async function loadQuizzes() {
     quizzesGrid.appendChild(card);
   });
 }
+
+window.openViewQuestionsModal = async function(quizId, title) {
+  document.getElementById('view-questions-title').textContent = title + ' - Questions';
+  const body = document.getElementById('view-questions-body');
+  
+  const questions = await ipcRenderer.invoke('db:getQuestionsByQuiz', quizId);
+  
+  if (questions.length === 0) {
+    body.innerHTML = '<p class="text-muted">No questions found for this quiz.</p>';
+  } else {
+    body.innerHTML = questions.map((q, i) => {
+      const optLabels = { a: q.opt_a, b: q.opt_b, c: q.opt_c, d: q.opt_d };
+      const correctLabel = optLabels[q.correct_opt];
+      
+      return `
+        <div style="padding: 12px; border: 1px solid var(--panel-border); border-radius: 8px; margin-bottom: 12px;">
+          <h4 style="margin: 0 0 8px 0;">${i + 1}. ${q.text}</h4>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+            <div style="padding: 4px 8px; border-radius: 4px; background: ${q.correct_opt === 'a' ? 'var(--success-bg)' : 'var(--panel-bg)'};">A. ${q.opt_a}</div>
+            <div style="padding: 4px 8px; border-radius: 4px; background: ${q.correct_opt === 'b' ? 'var(--success-bg)' : 'var(--panel-bg)'};">B. ${q.opt_b}</div>
+            <div style="padding: 4px 8px; border-radius: 4px; background: ${q.correct_opt === 'c' ? 'var(--success-bg)' : 'var(--panel-bg)'};">C. ${q.opt_c}</div>
+            <div style="padding: 4px 8px; border-radius: 4px; background: ${q.correct_opt === 'd' ? 'var(--success-bg)' : 'var(--panel-bg)'};">D. ${q.opt_d}</div>
+          </div>
+          <p style="margin: 0; font-weight: bold; color: var(--success);">Correct Answer: ${q.correct_opt.toUpperCase()}. ${correctLabel}</p>
+        </div>
+      `;
+    }).join('');
+  }
+  
+  document.getElementById('view-questions-modal').classList.add('active');
+};
+
+window.closeViewQuestionsModal = function() {
+  document.getElementById('view-questions-modal').classList.remove('active');
+};
 
 async function deleteQuiz(id) {
   if (confirm('Are you sure?')) {
@@ -661,8 +921,40 @@ window.openStartSessionModal = function(quizId, title) {
   }
   
   pendingQuizId = quizId;
+  currentQuizId = quizId;
   document.getElementById('modal-quiz-title').textContent = `Starting: ${title}`;
   document.getElementById('start-session-modal').classList.add('active');
+}
+
+async function loadLiveQuestionsAndAnswers() {
+  if (!currentQuizId) return;
+  
+  const questions = await ipcRenderer.invoke('db:getQuestionsByQuiz', currentQuizId);
+  const container = document.getElementById('live-questions-container');
+  
+  if (questions.length === 0) {
+    container.innerHTML = '<p class="text-muted">No questions found.</p>';
+  } else {
+    container.innerHTML = questions.map((q, i) => {
+      return `
+        <div style="padding: 12px; border: 1px solid var(--panel-border); border-radius: 8px; margin-bottom: 12px;">
+          <h4 style="margin: 0 0 8px 0;">${i + 1}. ${q.text}</h4>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+            <div style="padding: 4px 8px; border-radius: 4px; background: ${q.correct_opt === 'a' ? 'var(--success-bg)' : 'var(--panel-bg)'};">A. ${q.opt_a}</div>
+            <div style="padding: 4px 8px; border-radius: 4px; background: ${q.correct_opt === 'b' ? 'var(--success-bg)' : 'var(--panel-bg)'};">B. ${q.opt_b}</div>
+            <div style="padding: 4px 8px; border-radius: 4px; background: ${q.correct_opt === 'c' ? 'var(--success-bg)' : 'var(--panel-bg)'};">C. ${q.opt_c}</div>
+            <div style="padding: 4px 8px; border-radius: 4px; background: ${q.correct_opt === 'd' ? 'var(--success-bg)' : 'var(--panel-bg)'};">D. ${q.opt_d}</div>
+          </div>
+          <p style="margin: 0; font-weight: bold; color: var(--success);">Correct Answer: ${q.correct_opt.toUpperCase()}</p>
+        </div>
+      `;
+    }).join('');
+  }
+  
+  // Show answers panel, hide submissions panel
+  document.getElementById('live-submissions-panel').style.display = 'none';
+  document.getElementById('live-answers-panel').style.display = 'flex';
+  document.getElementById('live-answers-panel').style.flexDirection = 'column';
 }
 
 window.closeModal = function() {
@@ -714,12 +1006,67 @@ function updateLiveSessionUI(status, isNewSession = false) {
       document.getElementById('submissions-body').innerHTML = '';
       document.getElementById('student-count').textContent = '0';
       isQuizStarted = false; // Reset quiz started state for new session
+      showAnswersToStudents = false; // Reset show answers state for new session
+      showTeacherAnswers = false;
+      
+      // Reset panels
+      const studentsPanel = document.querySelector('.students-panel');
+      studentsPanel.style.display = 'flex';
+      studentsPanel.style.flexDirection = 'column';
+      document.getElementById('live-submissions-panel').style.display = 'flex';
+      document.getElementById('live-submissions-panel').style.flexDirection = 'column';
+      document.getElementById('live-answers-panel').style.display = 'none';
     }
     exportBtn.disabled = true;
   } else if (status === 'stopped') {
-    controls.innerHTML = `<span style="color: var(--text-muted); font-weight: 600;">Session Completed</span>`;
+    const showAnswersBtnClass = showAnswersToStudents ? 'btn-success' : 'btn-secondary';
+    const showAnswersBtnText = showAnswersToStudents ? 'Hide Answers from Students' : 'Show Answers to Students';
+    const viewAnswersBtnText = showTeacherAnswers ? 'Hide Questions and Answers' : 'View Questions and Answers';
+    controls.innerHTML = `
+      <div style="display: flex; gap: 16px; align-items: center;">
+        <span style="color: var(--text-muted); font-weight: 600;">Session Completed</span>
+        <button class="btn btn-secondary" onclick="window.toggleTeacherAnswers()">${viewAnswersBtnText}</button>
+        <button class="btn ${showAnswersBtnClass}" onclick="window.toggleShowAnswersToStudents()">${showAnswersBtnText}</button>
+      </div>
+    `;
     exportBtn.disabled = false;
   }
+}
+
+window.toggleShowAnswersToStudents = async function() {
+  if (!currentSessionId) return;
+  
+  showAnswersToStudents = !showAnswersToStudents;
+  await ipcRenderer.invoke('db:toggleShowAnswers', currentSessionId);
+  
+  // Send WebSocket message to server
+  ws.send(JSON.stringify({ 
+    type: 'session:toggle_show_answers', 
+    payload: { sessionId: currentSessionId, showAnswers: showAnswersToStudents } 
+  }));
+  
+  updateLiveSessionUI('stopped');
+}
+
+window.toggleTeacherAnswers = async function() {
+  showTeacherAnswers = !showTeacherAnswers;
+  const studentsPanel = document.querySelector('.students-panel');
+  
+  if (showTeacherAnswers) {
+    await loadLiveQuestionsAndAnswers();
+    studentsPanel.style.display = 'none';
+    document.getElementById('live-submissions-panel').style.display = 'none';
+    document.getElementById('live-answers-panel').style.display = 'flex';
+    document.getElementById('live-answers-panel').style.flexDirection = 'column';
+  } else {
+    studentsPanel.style.display = 'flex';
+    studentsPanel.style.flexDirection = 'column';
+    document.getElementById('live-answers-panel').style.display = 'none';
+    document.getElementById('live-submissions-panel').style.display = 'flex';
+    document.getElementById('live-submissions-panel').style.flexDirection = 'column';
+  }
+  
+  updateLiveSessionUI('stopped');
 }
 
 window.closeJoins = function() {
@@ -745,11 +1092,6 @@ window.triggerQuizStart = function() {
     alert('No active session. Please start a session first.');
     return;
   }
-  if (!currentSessionCode) {
-    console.error('Start Quiz: No session code');
-    alert('No session code. Please start a session first.');
-    return;
-  }
   if (isQuizStarted) {
     console.warn('Quiz already started');
     return;
@@ -761,7 +1103,7 @@ window.triggerQuizStart = function() {
   }
   
   try {
-    ws.send(JSON.stringify({ type: 'session:trigger_start', payload: { code: currentSessionCode } }));
+    ws.send(JSON.stringify({ type: 'session:trigger_start', payload: {} }));
     isQuizStarted = true;
     updateLiveSessionUI('active'); // Refresh UI to show quiz started state
   } catch (err) {
