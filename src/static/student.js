@@ -12,6 +12,7 @@ let quizDuration = 0;
 let answers = {}; // { qId: option }
 let hasSubmitted = false;
 let currentStudent = null;
+let serverAddress = null;
 
 // DOM Elements
 const views = document.querySelectorAll('.view');
@@ -34,8 +35,31 @@ const goToSignupBtn = document.getElementById('go-to-signup-btn');
 const goToLoginBtn = document.getElementById('go-to-login-btn');
 const logoutBtn = document.getElementById('logout-btn');
 
+// Helper function to get API base URL
+function getApiBaseUrl() {
+  if (serverAddress) {
+    return `http://${serverAddress}`;
+  }
+  return ''; // Use current host
+}
+
+// Helper function to get WebSocket URL
+function getWsUrl() {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  if (serverAddress) {
+    return `${protocol}//${serverAddress}`;
+  }
+  return `${protocol}//${window.location.host}`;
+}
+
 // Init
 function init() {
+  // Check if server address is stored in localStorage (for backward compatibility)
+  const storedServerAddress = localStorage.getItem('quizmaster-server-address');
+  if (storedServerAddress) {
+    serverAddress = storedServerAddress;
+  }
+  
   // Check if student is logged in from localStorage
   const storedStudent = localStorage.getItem('quizmaster-student');
   if (storedStudent) {
@@ -89,7 +113,7 @@ signupForm.addEventListener('submit', async (e) => {
   const batch = document.getElementById('signup-batch').value.trim();
   
   try {
-    const res = await fetch('/api/students/signup', {
+    const res = await fetch(`${getApiBaseUrl()}/api/students/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ registrationNumber, rollNumber, fullName, semester, sessionYear, department, batch })
@@ -113,13 +137,14 @@ signupForm.addEventListener('submit', async (e) => {
 // Login Flow
 loginForm.addEventListener('submit', async (e) => {
   e.preventDefault();
+  
   const registrationNumber = document.getElementById('login-registration-number').value.trim();
   const sessionYear = document.getElementById('login-session-year').value.trim();
 
   if (!registrationNumber || !sessionYear) return;
 
   try {
-    const res = await fetch('/api/students/login', {
+    const res = await fetch(`${getApiBaseUrl()}/api/students/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ registrationNumber, sessionYear })
@@ -148,7 +173,7 @@ joinBtn.addEventListener('click', async () => {
   
   try {
     // Fetch active session details
-    const res = await fetch(`/api/active-session`);
+    const res = await fetch(`${getApiBaseUrl()}/api/active-session`);
     const data = await res.json();
     
     if (res.ok) {
@@ -166,8 +191,7 @@ joinBtn.addEventListener('click', async () => {
 });
 
 function connectWS() {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}`;
+  const wsUrl = getWsUrl();
   ws = new WebSocket(wsUrl);
   
   ws.onopen = () => {
@@ -246,6 +270,7 @@ function renderQuestions() {
     qCard.className = 'question-card';
     qCard.innerHTML = `
       <div class="q-text">${index + 1}. ${q.text}</div>
+      ${q.image ? `<img src="${q.image}" style="max-width: 100%; max-height: 300px; border-radius: 8px; margin: 12px 0;">` : ''}
       <div class="options-list">
         <label class="option-label">
           <input type="radio" name="q-${q.id}" value="a" onchange="recordAnswer(${q.id}, 'a')">
@@ -315,13 +340,13 @@ function submitQuiz(timedOut) {
     ws.send(JSON.stringify({ type: 'client:submit', payload }));
   } else {
     // Fallback HTTP
-    fetch('/api/submit', {
+    fetch(`${getApiBaseUrl()}/api/submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     }).then(res => res.json())
-      .then(data => showResult(data.score))
-      .catch(err => alert('Failed to submit'));
+    .then(data => showResult(data.score))
+    .catch(err => alert('Failed to submit'));
   }
 }
 
@@ -335,7 +360,7 @@ function showResult(score) {
 
 async function checkAnswersAvailable() {
   try {
-    const res = await fetch(`/api/sessions/${sessionId}/questions`);
+    const res = await fetch(`${getApiBaseUrl()}/api/sessions/${sessionId}/questions`);
     if (res.ok) {
       document.getElementById('view-answers-btn').style.display = 'block';
     } else {
@@ -349,7 +374,7 @@ async function checkAnswersAvailable() {
 
 document.getElementById('view-answers-btn').addEventListener('click', async () => {
   try {
-    const res = await fetch(`/api/sessions/${sessionId}/questions`);
+    const res = await fetch(`${getApiBaseUrl()}/api/sessions/${sessionId}/questions`);
     const questions = await res.json();
     renderAnswers(questions);
     switchView('answers');
@@ -374,6 +399,7 @@ function renderAnswers(questions) {
     qCard.className = 'question-card';
     qCard.innerHTML = `
       <div class="q-text" style="margin-bottom: 12px;">${i + 1}. ${q.text}</div>
+      ${q.image ? `<img src="${q.image}" style="max-width: 100%; max-height: 300px; border-radius: 8px; margin: 12px 0;">` : ''}
       <div class="options-list" style="margin-bottom: 12px;">
         <label class="option-label" style="background: ${q.correct_opt === 'a' ? 'var(--success-bg)' : (studentAnswer === 'a' ? 'var(--danger-bg)' : 'transparent')};">
           <span class="option-text">A. ${q.opt_a}</span>

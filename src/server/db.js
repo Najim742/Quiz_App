@@ -39,7 +39,7 @@ async function initDb() {
 
         if (tableExists) {
           // Existing table: check for all required columns, add missing ones
-          const studentColumns = ['registration_number', 'roll_number', 'full_name', 'semester', 'session_year', 'department', 'batch', 'verified'];
+          const studentColumns = ['registration_number', 'roll_number', 'full_name', 'semester', 'session_year', 'department', 'batch', 'verified', 'deleted'];
           
           // Check if there's an old "name" column
           const hasNameColumn = await columnExists('students', 'name');
@@ -62,10 +62,10 @@ async function initDb() {
                     else res();
                   });
                 });
-              } else if (column === 'verified') {
-                // Add verified column with default 0
+              } else if (column === 'verified' || column === 'deleted') {
+                // Add verified/deleted column with default 0
                 await new Promise((res, rej) => {
-                  db.run(`ALTER TABLE students ADD COLUMN verified INTEGER DEFAULT 0`, (err) => {
+                  db.run(`ALTER TABLE students ADD COLUMN ${column} INTEGER DEFAULT 0`, (err) => {
                     if (err) rej(err);
                     else res();
                   });
@@ -93,7 +93,8 @@ async function initDb() {
               session_year TEXT NOT NULL,
               department TEXT NOT NULL,
               batch TEXT NOT NULL,
-              verified INTEGER NOT NULL DEFAULT 0
+              verified INTEGER NOT NULL DEFAULT 0,
+              deleted INTEGER NOT NULL DEFAULT 0
             )`, (err) => {
               if (err) rej(err);
               else res();
@@ -108,7 +109,8 @@ async function initDb() {
             title TEXT NOT NULL,
             duration INTEGER DEFAULT 60,
             semester TEXT,
-            session TEXT
+            session TEXT,
+            deleted INTEGER DEFAULT 0
           )`, (err) => {
             if (err) rej(err);
             else res();
@@ -136,6 +138,17 @@ async function initDb() {
             });
           });
         }
+        
+        // Add deleted column to quizzes if not exists
+        const quizDeletedExists = await columnExists('quizzes', 'deleted');
+        if (!quizDeletedExists) {
+          await new Promise((res, rej) => {
+            db.run(`ALTER TABLE quizzes ADD COLUMN deleted INTEGER DEFAULT 0`, (err) => {
+              if (err) rej(err);
+              else res();
+            });
+          });
+        }
 
         // Questions table
         await new Promise((res, rej) => {
@@ -148,12 +161,24 @@ async function initDb() {
             opt_c TEXT NOT NULL,
             opt_d TEXT NOT NULL,
             correct_opt TEXT NOT NULL,
+            image TEXT,
             FOREIGN KEY(quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE
           )`, (err) => {
             if (err) rej(err);
             else res();
           });
         });
+
+        // Add image column to questions if not exists
+        const questionImageExists = await columnExists('questions', 'image');
+        if (!questionImageExists) {
+          await new Promise((res, rej) => {
+            db.run(`ALTER TABLE questions ADD COLUMN image TEXT`, (err) => {
+              if (err) rej(err);
+              else res();
+            });
+          });
+        }
 
         // Sessions table
         await new Promise((res, rej) => {
@@ -298,8 +323,8 @@ const dbApi = {
       const hasNameColumn = await columnExists('students', 'name');
       
       const query = hasNameColumn 
-        ? `SELECT id, registration_number, roll_number, COALESCE(full_name, name) as full_name, semester, session_year, department, batch, verified FROM students ORDER BY full_name`
-        : `SELECT * FROM students ORDER BY full_name`;
+        ? `SELECT id, registration_number, roll_number, COALESCE(full_name, name) as full_name, semester, session_year, department, batch, verified FROM students WHERE deleted = 0 ORDER BY full_name`
+        : `SELECT * FROM students WHERE deleted = 0 ORDER BY full_name`;
       
       db.all(query, (err, rows) => {
         if (err) reject(err);
@@ -308,7 +333,25 @@ const dbApi = {
     });
   },
 
-  deleteStudent: (id) => {
+  softDeleteStudent: (id) => {
+    return new Promise((resolve, reject) => {
+      db.run(`UPDATE students SET deleted = 1 WHERE id = ?`, [id], function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+  },
+  
+  restoreStudent: (id) => {
+    return new Promise((resolve, reject) => {
+      db.run(`UPDATE students SET deleted = 0 WHERE id = ?`, [id], function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+  },
+
+  permanentDeleteStudent: (id) => {
     return new Promise((resolve, reject) => {
       db.run(`DELETE FROM students WHERE id = ?`, [id], function(err) {
         if (err) reject(err);
@@ -319,7 +362,7 @@ const dbApi = {
 
   getQuizzes: () => {
     return new Promise((resolve, reject) => {
-      db.all(`SELECT * FROM quizzes`, (err, rows) => {
+      db.all(`SELECT * FROM quizzes WHERE deleted = 0`, (err, rows) => {
         if (err) reject(err);
         else resolve(rows);
       });
@@ -335,7 +378,25 @@ const dbApi = {
     });
   },
 
-  deleteQuiz: (id) => {
+  softDeleteQuiz: (id) => {
+    return new Promise((resolve, reject) => {
+      db.run(`UPDATE quizzes SET deleted = 1 WHERE id = ?`, [id], function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+  },
+  
+  restoreQuiz: (id) => {
+    return new Promise((resolve, reject) => {
+      db.run(`UPDATE quizzes SET deleted = 0 WHERE id = ?`, [id], function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+  },
+
+  permanentDeleteQuiz: (id) => {
     return new Promise((resolve, reject) => {
       db.serialize(() => {
         // First delete all submissions for sessions of this quiz
@@ -359,6 +420,33 @@ const dbApi = {
     });
   },
 
+  getDeletedItems: async () => {
+    return new Promise(async (resolve, reject) => {
+      const hasNameColumn = await columnExists('students', 'name');
+      const studentsQuery = hasNameColumn 
+        ? `SELECT id, registration_number, roll_number, COALESCE(full_name, name) as full_name, semester, session_year, department, batch, verified, 'student' as type FROM students WHERE deleted = 1`
+        : `SELECT id, registration_number, roll_number, full_name, semester, session_year, department, batch, verified, 'student' as type FROM students WHERE deleted = 1`;
+      
+      const quizzesQuery = `SELECT id, title, duration, semester, session, 'quiz' as type FROM quizzes WHERE deleted = 1`;
+      
+      const students = await new Promise((res, rej) => {
+        db.all(studentsQuery, (err, rows) => {
+          if (err) rej(err);
+          else res(rows);
+        });
+      });
+      
+      const quizzes = await new Promise((res, rej) => {
+        db.all(quizzesQuery, (err, rows) => {
+          if (err) rej(err);
+          else res(rows);
+        });
+      });
+      
+      resolve([...students, ...quizzes]);
+    });
+  },
+
   getQuestionsByQuiz: (quizId) => {
     return new Promise((resolve, reject) => {
       db.all(`SELECT * FROM questions WHERE quiz_id = ?`, [quizId], (err, rows) => {
@@ -368,11 +456,11 @@ const dbApi = {
     });
   },
 
-  addQuestion: (quizId, text, opt_a, opt_b, opt_c, opt_d, correct_opt) => {
+  addQuestion: (quizId, text, opt_a, opt_b, opt_c, opt_d, correct_opt, image) => {
     return new Promise((resolve, reject) => {
-      db.run(`INSERT INTO questions (quiz_id, text, opt_a, opt_b, opt_c, opt_d, correct_opt) 
-              VALUES (?, ?, ?, ?, ?, ?, ?)`, 
-              [quizId, text, opt_a, opt_b, opt_c, opt_d, correct_opt], function(err) {
+      db.run(`INSERT INTO questions (quiz_id, text, opt_a, opt_b, opt_c, opt_d, correct_opt, image) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, 
+              [quizId, text, opt_a, opt_b, opt_c, opt_d, correct_opt, image], function(err) {
         if (err) reject(err);
         else resolve(this.lastID);
       });
@@ -499,7 +587,35 @@ const dbApi = {
     });
   },
 
-  deleteQuizzes: (quizIds) => {
+  softDeleteQuizzes: (quizIds) => {
+    return new Promise((resolve, reject) => {
+      if (quizIds.length === 0) {
+        resolve(0);
+        return;
+      }
+      const placeholders = quizIds.map(() => '?').join(',');
+      db.run(`UPDATE quizzes SET deleted = 1 WHERE id IN (${placeholders})`, quizIds, function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+  },
+
+  restoreQuizzes: (quizIds) => {
+    return new Promise((resolve, reject) => {
+      if (quizIds.length === 0) {
+        resolve(0);
+        return;
+      }
+      const placeholders = quizIds.map(() => '?').join(',');
+      db.run(`UPDATE quizzes SET deleted = 0 WHERE id IN (${placeholders})`, quizIds, function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+  },
+
+  permanentDeleteQuizzes: (quizIds) => {
     return new Promise((resolve, reject) => {
       if (quizIds.length === 0) {
         resolve(0);
