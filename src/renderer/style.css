@@ -446,6 +446,54 @@ th {
   overflow: hidden;
 }
 
+/* View Questions modal: keep header/footer fixed, let the question list scroll */
+#view-questions-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+}
+
+#view-questions-modal .modal-header-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+  margin-bottom: 16px;
+}
+
+#view-questions-modal #view-questions-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+/* Elegant scrollbar for the View Questions list */
+#view-questions-modal #view-questions-body {
+  scrollbar-width: thin;
+  scrollbar-color: hsla(233, 0%, 0%, 0.25) transparent;
+}
+
+#view-questions-modal #view-questions-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+#view-questions-modal #view-questions-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#view-questions-modal #view-questions-body::-webkit-scrollbar-thumb {
+  background: rgba(124, 142, 253, 0.35);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.28s ease;
+}
+
+#view-questions-modal #view-questions-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(124, 142, 253, 0.6);
+  background-clip: padding-box;
+}
+
 .view-results-modal .table-container {
   max-height: 400px;
   overflow-y: auto;
