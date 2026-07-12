@@ -280,7 +280,7 @@ async function startServer(port = 3000) {
             break;
             
           case 'session:start':
-            // data.payload = { quizId } (no code anymore!)
+            // data.payload = { quizId, filters: { department, sessionYear, semester, batch } }
             // Validate input
             if (!data.payload || !data.payload.quizId) {
               console.error('Invalid session:start payload');
@@ -310,15 +310,28 @@ async function startServer(port = 3000) {
                 timerBroadcastInterval = null;
               }
               
+              // Get filters from payload
+              const filters = data.payload.filters || {};
+              const filterDepartment = filters.department || null;
+              const filterSessionYear = filters.sessionYear || null;
+              const filterSemester = filters.semester || null;
+              const filterBatch = filters.batch || null;
+              
               // Generate a dummy code (since DB still requires it)
               const dummyCode = Math.random().toString(36).substring(7);
-              const sessionId = await dbApi.createSession(dummyCode, data.payload.quizId);
+              const sessionId = await dbApi.createSession(dummyCode, data.payload.quizId, filterDepartment, filterSessionYear, filterSemester, filterBatch);
               currentSessionId = sessionId;
               activeSession = {
                 id: sessionId,
                 quiz_id: data.payload.quizId,
                 title: selectedQuiz.title,
-                duration: selectedQuiz.duration
+                duration: selectedQuiz.duration,
+                filters: {
+                  department: filterDepartment,
+                  sessionYear: filterSessionYear,
+                  semester: filterSemester,
+                  batch: filterBatch
+                }
               };
               
               ws.send(JSON.stringify({ type: 'session:started', payload: { sessionId, duration: quizDuration } }));
@@ -435,7 +448,7 @@ async function startServer(port = 3000) {
             break;
 
           case 'client:join':
-            // payload: { registrationNumber, roll, name, semester }
+            // payload: { registrationNumber, roll, name, semester, batch, sessionYear, department }
             // Validate input
             if (!data.payload || !data.payload.registrationNumber || !data.payload.roll || !data.payload.name) {
               ws.send(JSON.stringify({ type: 'server:join_rejected', message: 'Invalid student information.' }));
@@ -446,7 +459,10 @@ async function startServer(port = 3000) {
             const MAX_FIELD_LENGTH = 100;
             if ((data.payload.roll && String(data.payload.roll).length > MAX_FIELD_LENGTH) ||
                 (data.payload.name && String(data.payload.name).length > MAX_FIELD_LENGTH) ||
-                (data.payload.semester && String(data.payload.semester).length > MAX_FIELD_LENGTH)) {
+                (data.payload.semester && String(data.payload.semester).length > MAX_FIELD_LENGTH) ||
+                (data.payload.batch && String(data.payload.batch).length > MAX_FIELD_LENGTH) ||
+                (data.payload.sessionYear && String(data.payload.sessionYear).length > MAX_FIELD_LENGTH) ||
+                (data.payload.department && String(data.payload.department).length > MAX_FIELD_LENGTH)) {
               ws.send(JSON.stringify({ type: 'server:join_rejected', message: 'Student information is too long.' }));
               break;
             }
@@ -455,6 +471,28 @@ async function startServer(port = 3000) {
               // Reject the student
               ws.send(JSON.stringify({ type: 'server:join_rejected', message: 'Joins are closed for this session.' }));
             } else {
+              // Check if student matches the session filters
+              if (activeSession && activeSession.filters) {
+                const { department, sessionYear, semester, batch } = activeSession.filters;
+                // For each filter, if it's set, the student's corresponding value must match
+                if (department && data.payload.department !== department) {
+                  ws.send(JSON.stringify({ type: 'server:join_rejected', message: `Only students from ${department} department can join this session.` }));
+                  break;
+                }
+                if (sessionYear && data.payload.sessionYear !== sessionYear) {
+                  ws.send(JSON.stringify({ type: 'server:join_rejected', message: `Only students from session ${sessionYear} can join this session.` }));
+                  break;
+                }
+                if (semester && data.payload.semester !== semester) {
+                  ws.send(JSON.stringify({ type: 'server:join_rejected', message: `Only students from ${semester} semester can join this session.` }));
+                  break;
+                }
+                if (batch && data.payload.batch !== batch) {
+                  ws.send(JSON.stringify({ type: 'server:join_rejected', message: `Only students from ${batch} batch can join this session.` }));
+                  break;
+                }
+              }
+              
               if (teacherWs && teacherWs.readyState === WebSocket.OPEN) {
                 teacherWs.send(JSON.stringify({ type: 'server:client_joined', payload: data.payload }));
               }

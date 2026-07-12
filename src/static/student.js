@@ -200,7 +200,15 @@ function connectWS() {
   ws.onopen = () => {
     ws.send(JSON.stringify({
       type: 'client:join',
-      payload: { registrationNumber, roll, name, semester, batch }
+      payload: { 
+        registrationNumber, 
+        roll, 
+        name, 
+        semester, 
+        batch,
+        sessionYear: currentStudent.session_year,
+        department: currentStudent.department
+      }
     }));
   };
   

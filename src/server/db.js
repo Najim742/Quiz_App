@@ -231,6 +231,20 @@ async function initDb() {
           });
         }
 
+        // Add filter columns to sessions if not exists
+        const filterColumns = ['filter_department', 'filter_session_year', 'filter_semester', 'filter_batch'];
+        for (const col of filterColumns) {
+          const colExists = await columnExists('sessions', col);
+          if (!colExists) {
+            await new Promise((res, rej) => {
+              db.run(`ALTER TABLE sessions ADD COLUMN ${col} TEXT`, (err) => {
+                if (err) rej(err);
+                else res();
+              });
+            });
+          }
+        }
+
         // Submissions table
         await new Promise((res, rej) => {
           db.run(`CREATE TABLE IF NOT EXISTS submissions (
@@ -600,10 +614,10 @@ const dbApi = {
     });
   },
 
-  createSession: (code, quizId) => {
+  createSession: (code, quizId, filterDepartment, filterSessionYear, filterSemester, filterBatch) => {
     return new Promise((resolve, reject) => {
       const now = new Date().toISOString(); // UTC ISO string
-      db.run(`INSERT INTO sessions (code, quiz_id, status, created_at) VALUES (?, ?, 'active', ?)`, [code, quizId, now], function(err) {
+      db.run(`INSERT INTO sessions (code, quiz_id, status, created_at, filter_department, filter_session_year, filter_semester, filter_batch) VALUES (?, ?, 'active', ?, ?, ?, ?, ?)`, [code, quizId, now, filterDepartment, filterSessionYear, filterSemester, filterBatch], function(err) {
         if (err) reject(err);
         else resolve(this.lastID);
       });
@@ -862,6 +876,24 @@ const dbApi = {
       db.all(`SELECT DISTINCT department FROM students WHERE deleted = 0 AND department IS NOT NULL ORDER BY department`, (err, rows) => {
         if (err) reject(err);
         else resolve(rows.map(r => r.department));
+      });
+    });
+  },
+
+  getUniqueSemesters: () => {
+    return new Promise((resolve, reject) => {
+      db.all(`SELECT DISTINCT semester FROM students WHERE deleted = 0 AND semester IS NOT NULL ORDER BY semester`, (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows.map(r => r.semester));
+      });
+    });
+  },
+
+  getUniqueBatches: () => {
+    return new Promise((resolve, reject) => {
+      db.all(`SELECT DISTINCT batch FROM students WHERE deleted = 0 AND batch IS NOT NULL ORDER BY batch`, (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows.map(r => r.batch));
       });
     });
   }

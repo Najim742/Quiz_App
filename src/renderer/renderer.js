@@ -1937,7 +1937,7 @@ async function saveQuiz() {
 // Session Management
 let pendingQuizId = null;
 
-window.openStartSessionModal = function(quizId, title) {
+window.openStartSessionModal = async function(quizId, title) {
   // Check if server is running
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     alert('Server is not running. Please click "Start Server" to begin.');
@@ -1947,6 +1947,26 @@ window.openStartSessionModal = function(quizId, title) {
   pendingQuizId = quizId;
   currentQuizId = quizId;
   document.getElementById('modal-quiz-title').textContent = `Starting: ${title}`;
+  
+  // Fetch unique values and populate dropdowns
+  const [departments, sessionYears, semesters, batches] = await Promise.all([
+    ipcRenderer.invoke('db:getUniqueDepartments'),
+    ipcRenderer.invoke('db:getUniqueSessionYears'),
+    ipcRenderer.invoke('db:getUniqueSemesters'),
+    ipcRenderer.invoke('db:getUniqueBatches')
+  ]);
+  
+  // Populate each dropdown
+  const deptSelect = document.getElementById('filter-department');
+  const sessionSelect = document.getElementById('filter-session-year');
+  const semSelect = document.getElementById('filter-semester');
+  const batchSelect = document.getElementById('filter-batch');
+  
+  deptSelect.innerHTML = '<option value="">Select Department</option>' + departments.map(d => `<option value="${d}">${d}</option>`).join('');
+  sessionSelect.innerHTML = '<option value="">Select Session Year</option>' + sessionYears.map(s => `<option value="${s}">${s}</option>`).join('');
+  semSelect.innerHTML = '<option value="">Select Semester</option>' + semesters.map(s => `<option value="${s}">${s}</option>`).join('');
+  batchSelect.innerHTML = '<option value="">Select Batch</option>' + batches.map(b => `<option value="${b}">${b}</option>`).join('');
+  
   document.getElementById('start-session-modal').classList.add('active');
 }
 
@@ -1985,9 +2005,22 @@ window.closeModal = function() {
 }
 
 document.getElementById('confirm-start-btn').addEventListener('click', () => {
+  const filterDepartment = document.getElementById('filter-department').value || null;
+  const filterSessionYear = document.getElementById('filter-session-year').value || null;
+  const filterSemester = document.getElementById('filter-semester').value || null;
+  const filterBatch = document.getElementById('filter-batch').value || null;
+  
   ws.send(JSON.stringify({
     type: 'session:start',
-    payload: { quizId: pendingQuizId }
+    payload: { 
+      quizId: pendingQuizId,
+      filters: {
+        department: filterDepartment,
+        sessionYear: filterSessionYear,
+        semester: filterSemester,
+        batch: filterBatch
+      }
+    }
   }));
   closeModal();
   window.switchView('live');

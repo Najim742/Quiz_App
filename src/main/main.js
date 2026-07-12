@@ -196,6 +196,26 @@ app.whenReady().then(async () => {
       return await dbApi.getSessionQuestionsAndAnswers(sessionId);
     });
 
+    ipcMain.handle('db:getUniqueSessionYears', async () => {
+      return await dbApi.getUniqueSessionYears();
+    });
+
+    ipcMain.handle('db:getUniqueDepartments', async () => {
+      return await dbApi.getUniqueDepartments();
+    });
+
+    ipcMain.handle('db:getUniqueSemesters', async () => {
+      return await dbApi.getUniqueSemesters();
+    });
+
+    ipcMain.handle('db:getUniqueBatches', async () => {
+      return await dbApi.getUniqueBatches();
+    });
+
+    ipcMain.handle('db:createSession', async (_, code, quizId, filterDepartment, filterSessionYear, filterSemester, filterBatch) => {
+      return await dbApi.createSession(code, quizId, filterDepartment, filterSessionYear, filterSemester, filterBatch);
+    });
+
     // CSV export handler
     ipcMain.handle('export-csv', async (_, sessionId) => {
       try {
