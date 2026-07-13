@@ -464,7 +464,6 @@ th {
 
 .view-results-modal {
   max-width: 800px;
-  max-height: 80vh;
   overflow: hidden;
 }
 
@@ -479,9 +478,16 @@ th {
 #view-questions-modal .modal-header-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
   flex-shrink: 0;
   margin-bottom: 16px;
+  padding-inline: 8px;
+}
+
+#view-questions-modal .view-results-modal {
+  padding: 16px 4px;
+  padding-left: 8px;
 }
 
 #view-questions-modal #view-questions-body {
@@ -563,7 +569,6 @@ th {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
-  margin-top: 24px;
 }
 
 /* History Expandable */
