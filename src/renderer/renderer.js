@@ -1614,7 +1614,7 @@ window.removeEditQuestionImage = function(qid) {
 
 let deletedQuestions = new Set(); // Keep track of question IDs to delete
 window.removeEditQuestion = async function(qid) {
-  if (confirm('Are you sure you want to delete this question?')) {
+  if (await window.showConfirm('Are you sure you want to delete this question?')) {
     if (String(qid).startsWith('new-')) {
       // It's a new question, just remove from DOM
       const item = document.querySelector(`.edit-question-item[data-qid="${qid}"]`);
@@ -1671,7 +1671,7 @@ window.saveQuestionEdits = async function() {
       }
       
       if (!text || !opt_a || !opt_b || !opt_c || !opt_d) {
-        alert('All fields (text and 4 options) are required for each question.');
+        window.showAlert('All fields (text and 4 options) are required for each question.');
         return;
       }
       
@@ -1689,12 +1689,12 @@ window.saveQuestionEdits = async function() {
         );
       }
     }
-    alert('Changes saved successfully!');
+    window.showAlert('Changes saved successfully!');
     // Re-render to reflect saved values
     openViewQuestionsModal(currentEditQuizId, currentEditTitle, false);
   } catch (err) {
     console.error('Error saving question edits:', err);
-    alert('Failed to save changes: ' + (err.message || 'Unknown error'));
+    window.showAlert('Failed to save changes: ' + (err.message || 'Unknown error'));
   }
 };
 
