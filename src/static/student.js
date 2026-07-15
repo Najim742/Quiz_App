@@ -300,7 +300,7 @@ function renderQuestions() {
     qCard.className = 'question-card';
     qCard.innerHTML = `
       <div class="q-text">${index + 1}. ${q.text}</div>
-      ${q.image ? `<img src="${q.image}" style="max-width: 100%; max-height: 300px; border-radius: 8px; margin: 12px 0;">` : ''}
+      ${q.image ? `<img src="${q.image}" style="width: ${q.image_width || '100%'}; height: ${q.image_height || '300px'}; object-fit: contain; border-radius: 8px; margin: 12px 0;">` : ''}
       <div class="options-list">
         <label class="option-label">
           <input type="radio" name="q-${q.id}" value="a" onchange="recordAnswer(${q.id}, 'a')">
@@ -441,7 +441,7 @@ function renderAnswers(questions) {
     qCard.className = 'question-card';
     qCard.innerHTML = `
       <div class="q-text" style="margin-bottom: 12px;">${i + 1}. ${q.text}</div>
-      ${q.image ? `<img src="${q.image}" style="max-width: 100%; max-height: 300px; border-radius: 8px; margin: 12px 0;">` : ''}
+      ${q.image ? `<img src="${q.image}" style="width: ${q.image_width || '100%'}; height: ${q.image_height || '300px'}; object-fit: contain; border-radius: 8px; margin: 12px 0;">` : ''}
       <div class="options-list" style="margin-bottom: 12px;">
         <label class="option-label" style="background: ${q.correct_opt === 'a' ? 'var(--success-bg)' : (studentAnswer === 'a' ? 'var(--danger-bg)' : 'transparent')};">
           <span class="option-text">A. ${q.opt_a}</span>

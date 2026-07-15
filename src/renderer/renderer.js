@@ -1428,23 +1428,13 @@ function addEditQuestionUI() {
         imagePreview.style.display = 'block';
         imagePreview.innerHTML = `
           <div class="resizable-image-container">
+            <button type="button" class="remove-image-cross" onclick="window.removeEditQuestionImage('${qid}')">×</button>
             <img src="${event.target.result}">
           </div>
         `;
         const btnRow = imageInput.parentElement;
         const imgBtn = btnRow.querySelector('.eq-image-btn');
         if (imgBtn) imgBtn.innerHTML = eqImageBtnHtml('Change Image');
-        // Add Remove Image button if not present
-        if (!btnRow.querySelector('.eq-remove-btn')) {
-          const removeBtn = document.createElement('button');
-          removeBtn.type = 'button';
-          removeBtn.className = 'btn btn-secondary eq-remove-btn';
-          removeBtn.style.padding = '6px 8px';
-          removeBtn.style.fontSize = '12px';
-          removeBtn.textContent = 'Remove Image';
-          removeBtn.onclick = () => window.removeEditQuestionImage(qid);
-          btnRow.appendChild(removeBtn);
-        }
       };
       reader.readAsDataURL(file);
     }
@@ -1517,7 +1507,8 @@ window.openViewQuestionsModal = async function(quizId, title, isReadOnly = false
             ` : ''}
           </div>
           ${q.image ? `
-            <div class="resizable-image-container">
+            <div class="resizable-image-container" style="width: ${q.image_width || '100%'}; height: ${q.image_height || '300px'};">
+              ${!isReadOnly ? `<button type="button" class="remove-image-cross" onclick="window.removeEditQuestionImage(${q.id})">×</button>` : ''}
               <img src="${q.image}">
             </div>
           ` : ''}
@@ -1531,7 +1522,6 @@ window.openViewQuestionsModal = async function(quizId, title, isReadOnly = false
           <div style="margin-top: 8px; display: flex; gap: 8px;">
             <input type="file" class="eq-image-input" accept="image/*" style="display: none;">
             <button type="button" class="btn btn-secondary eq-image-btn" style="padding: 6px 8px; font-size: 12px;" onclick="this.previousElementSibling.click()">${eqImageBtnHtml(q.image ? 'Change Image' : 'Add Image')}</button>
-            ${q.image ? `<button type="button" class="btn btn-secondary eq-remove-btn" style="padding: 6px 8px; font-size: 12px;" onclick="window.removeEditQuestionImage(${q.id})">Remove Image</button>` : ''}
           </div>
         `}
         <div class="options-grid" style="margin-top: 12px;">
@@ -1579,23 +1569,13 @@ window.openViewQuestionsModal = async function(quizId, title, isReadOnly = false
               imagePreview.style.display = 'block';
               imagePreview.innerHTML = `
                 <div class="resizable-image-container">
+                  <button type="button" class="remove-image-cross" onclick="window.removeEditQuestionImage('${qid}')">×</button>
                   <img src="${event.target.result}">
                 </div>
               `;
               const btnRow = imageInput.parentElement;
               const imgBtn = btnRow.querySelector('.eq-image-btn');
               if (imgBtn) imgBtn.innerHTML = eqImageBtnHtml('Change Image');
-              // Add Remove Image button if not present
-              if (!btnRow.querySelector('.eq-remove-btn')) {
-                const removeBtn = document.createElement('button');
-                removeBtn.type = 'button';
-                removeBtn.className = 'btn btn-secondary eq-remove-btn';
-                removeBtn.style.padding = '6px 8px';
-                removeBtn.style.fontSize = '12px';
-                removeBtn.textContent = 'Remove Image';
-                removeBtn.onclick = () => window.removeEditQuestionImage(qid);
-                btnRow.appendChild(removeBtn);
-              }
             };
             reader.readAsDataURL(file);
           }
@@ -1611,6 +1591,7 @@ window.removeEditQuestionImage = function(qid) {
   editQuestionImages[qid] = null;
   const item = document.querySelector(`.edit-question-item[data-qid="${qid}"]`);
   if (item) {
+    // Check for image in eq-image-preview (new questions)
     const imagePreview = item.querySelector('.eq-image-preview');
     if (imagePreview) {
       if (String(qid).startsWith('new-')) {
@@ -1619,11 +1600,15 @@ window.removeEditQuestionImage = function(qid) {
       } else {
         imagePreview.remove();
       }
+    } else {
+      // Check for resizable-image-container directly (existing questions)
+      const resizableContainer = item.querySelector('.resizable-image-container');
+      if (resizableContainer) {
+        resizableContainer.remove();
+      }
     }
     const imgBtn = item.querySelector('.eq-image-btn');
     if (imgBtn) imgBtn.innerHTML = eqImageBtnHtml('Add Image');
-    const removeBtn = item.querySelector('.eq-remove-btn');
-    if (removeBtn) removeBtn.remove();
   }
 };
 
@@ -1676,6 +1661,15 @@ window.saveQuestionEdits = async function() {
       const correct_opt = correctRadio ? correctRadio.value : 'a';
       const image = editQuestionImages[qid] !== undefined ? editQuestionImages[qid] : null;
       
+      // Get image container dimensions
+      const imageContainer = item.querySelector('.resizable-image-container');
+      let image_width = null;
+      let image_height = null;
+      if (imageContainer) {
+        image_width = imageContainer.style.width || imageContainer.offsetWidth + 'px';
+        image_height = imageContainer.style.height || imageContainer.offsetHeight + 'px';
+      }
+      
       if (!text || !opt_a || !opt_b || !opt_c || !opt_d) {
         alert('All fields (text and 4 options) are required for each question.');
         return;
@@ -1685,13 +1679,13 @@ window.saveQuestionEdits = async function() {
         // New question, add to DB
         await ipcRenderer.invoke(
           'db:addQuestion',
-          currentEditQuizId, text, opt_a, opt_b, opt_c, opt_d, correct_opt, image
+          currentEditQuizId, text, opt_a, opt_b, opt_c, opt_d, correct_opt, image, image_width, image_height
         );
       } else {
         // Existing question, update in DB
         await ipcRenderer.invoke(
           'db:updateQuestion',
-          Number(qid), text, opt_a, opt_b, opt_c, opt_d, correct_opt, image
+          Number(qid), text, opt_a, opt_b, opt_c, opt_d, correct_opt, image, image_width, image_height
         );
       }
     }
@@ -1802,7 +1796,8 @@ function addQuestionUI() {
       reader.onload = (event) => {
         const base64 = event.target.result;
         imagePreview.innerHTML = `
-          <div class="resizable-image-container"">
+          <div class="resizable-image-container">
+            <button type="button" class="remove-image-cross" onclick="window.removeCreateQuizImage(this)">×</button>
             <img src="${base64}">
           </div>
         `;
@@ -1822,6 +1817,17 @@ window.deleteQuestion = function(btn) {
   if (questionItem) {
     questionItem.remove();
     reindexQuestions();
+  }
+};
+
+window.removeCreateQuizImage = function(btn) {
+  const resizableContainer = btn.closest('.resizable-image-container');
+  if (resizableContainer) {
+    const imagePreview = resizableContainer.closest('.q-image-preview');
+    if (imagePreview) {
+      imagePreview.innerHTML = '';
+      delete imagePreview.dataset.base64;
+    }
   }
 };
 
@@ -1929,6 +1935,15 @@ async function saveQuiz() {
       const imagePreview = item.querySelector('.q-image-preview');
       const image = imagePreview && imagePreview.dataset.base64 ? imagePreview.dataset.base64 : null;
       
+      // Get image container dimensions
+      const imageContainer = item.querySelector('.resizable-image-container');
+      let image_width = null;
+      let image_height = null;
+      if (imageContainer) {
+        image_width = imageContainer.style.width || imageContainer.offsetWidth + 'px';
+        image_height = imageContainer.style.height || imageContainer.offsetHeight + 'px';
+      }
+      
       if (text) {
         await ipcRenderer.invoke(
           'db:addQuestion', 
@@ -1939,7 +1954,9 @@ async function saveQuiz() {
           opt_c, 
           opt_d, 
           correct_opt,
-          image
+          image,
+          image_width,
+          image_height
         );
       }
     }
