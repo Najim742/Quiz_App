@@ -33,6 +33,13 @@ let deletedItems = [];
 let isSelectModeRecycle = false;
 let selectedRecycleItems = new Set();
 let currentRecycleItem = null;
+let quizAssistantState = {
+  mode: 'manual',
+  messages: [],
+  isLoading: false,
+  pendingQuestions: [],
+  pendingAttachments: []
+};
 
 // Update server status UI
 function updateServerStatusUI(isRunning) {
@@ -1713,18 +1720,73 @@ async function deleteQuiz(id) {
 function setupQuizBuilder() {
   const addBtn = document.getElementById('add-question-btn');
   const saveBtn = document.getElementById('save-quiz-btn');
+  const assistantSendBtn = document.getElementById('quiz-assistant-send-btn');
+  const assistantFillBtn = document.getElementById('quiz-assistant-fill-btn');
+  const assistantResetBtn = document.getElementById('quiz-assistant-reset-btn');
+  const assistantCloseBtn = document.getElementById('quiz-assistant-close-btn');
+  const assistantInput = document.getElementById('quiz-assistant-input');
+  const chatbotFab = document.getElementById('quiz-chatbot-fab');
+  const assistantAttachBtn = document.getElementById('quiz-assistant-attach-btn');
+  const assistantFileInput = document.getElementById('quiz-assistant-file-input');
   
-  if (addBtn) addBtn.addEventListener('click', addQuestionUI);
+  if (addBtn) addBtn.addEventListener('click', () => addQuestionUI());
   if (saveBtn) saveBtn.addEventListener('click', saveQuiz);
+  if (chatbotFab) {
+    chatbotFab.addEventListener('click', () => {
+      const nextMode = quizAssistantState.mode === 'chatbot' ? 'manual' : 'chatbot';
+      setQuizCreateMode(nextMode);
+      if (nextMode === 'chatbot' && assistantInput && !quizAssistantState.isLoading) {
+        assistantInput.focus();
+      }
+    });
+  }
+  if (assistantSendBtn) assistantSendBtn.addEventListener('click', sendQuizAssistantPrompt);
+  if (assistantFillBtn) assistantFillBtn.addEventListener('click', fillQuizAssistantQuestions);
+  if (assistantResetBtn) assistantResetBtn.addEventListener('click', resetQuizAssistantConversation);
+  if (assistantCloseBtn) assistantCloseBtn.addEventListener('click', () => setQuizCreateMode('manual'));
+  
+  const assistantOverlay = document.getElementById('quiz-assistant-overlay');
+  if (assistantOverlay) {
+    assistantOverlay.addEventListener('click', (e) => {
+      if (e.target === assistantOverlay) {
+        setQuizCreateMode('manual');
+      }
+    });
+  }
+  
+  if (!window.__quizAssistantEscapeBound) {
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && quizAssistantState.mode === 'chatbot') {
+        setQuizCreateMode('manual');
+      }
+    });
+    window.__quizAssistantEscapeBound = true;
+  }
+  if (assistantInput) {
+    assistantInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendQuizAssistantPrompt();
+      }
+    });
+  }
+  if (assistantAttachBtn && assistantFileInput) {
+    assistantAttachBtn.addEventListener('click', () => assistantFileInput.click());
+    assistantFileInput.addEventListener('change', handleAssistantFileSelect);
+  }
+
+  setupAISettingsModal();
   
   // Add one default question
   addQuestionUI();
+  setQuizCreateMode('manual');
+  renderQuizAssistantMessages();
   
   // Ensure form inputs are interactive
   ensureFormInputsActive();
 }
 
-function addQuestionUI() {
+function addQuestionUI(questionData = {}) {
   const container = document.getElementById('questions-container');
   if (!container) {
     console.error('Questions container not found');
@@ -1785,6 +1847,7 @@ function addQuestionUI() {
     </div>
   `;
   container.appendChild(qDiv);
+  populateQuestionItem(qDiv, questionData, index);
   
   // Add event listener to image input
   const imageInput = qDiv.querySelector('.q-image-input');
@@ -1810,6 +1873,30 @@ function addQuestionUI() {
   
   // Ensure newly added inputs are interactive
   ensureFormInputsActive();
+}
+
+function populateQuestionItem(questionItem, questionData, index) {
+  if (!questionItem || !questionData || typeof questionData !== 'object') return;
+
+  questionItem.querySelector('.q-text').value = coerceAssistantText(questionData.text).slice(0, 500);
+  questionItem.querySelector('.q-opt-a').value = coerceAssistantText(questionData.opt_a).slice(0, 200);
+  questionItem.querySelector('.q-opt-b').value = coerceAssistantText(questionData.opt_b).slice(0, 200);
+  questionItem.querySelector('.q-opt-c').value = coerceAssistantText(questionData.opt_c).slice(0, 200);
+  questionItem.querySelector('.q-opt-d').value = coerceAssistantText(questionData.opt_d).slice(0, 200);
+
+  const correctOpt = normalizeCorrectOption(
+    questionData.correct_opt || questionData.correctOption,
+    [
+      questionData.opt_a,
+      questionData.opt_b,
+      questionData.opt_c,
+      questionData.opt_d
+    ]
+  );
+  const correctRadio = questionItem.querySelector(`input[name="correct-${index}"][value="${correctOpt}"]`);
+  if (correctRadio) {
+    correctRadio.checked = true;
+  }
 }
 
 window.deleteQuestion = function(btn) {
@@ -1849,9 +1936,775 @@ function reindexQuestions() {
   });
 }
 
+function setQuizCreateMode(mode) {
+  quizAssistantState.mode = mode === 'chatbot' ? 'chatbot' : 'manual';
+
+  const assistantOverlay = document.getElementById('quiz-assistant-overlay');
+  const assistantPanel = document.getElementById('quiz-assistant-panel');
+  const chatbotFab = document.getElementById('quiz-chatbot-fab');
+  const assistantInput = document.getElementById('quiz-assistant-input');
+  const assistantSendBtn = document.getElementById('quiz-assistant-send-btn');
+  const assistantFillBtn = document.getElementById('quiz-assistant-fill-btn');
+
+  const isOpen = quizAssistantState.mode === 'chatbot';
+
+  if (assistantOverlay) {
+    assistantOverlay.classList.toggle('active', isOpen);
+  }
+  if (assistantPanel) {
+    // Re-trigger panel animation when opening
+    if (isOpen) {
+      assistantPanel.style.animation = 'none';
+      // eslint-disable-next-line no-unused-expressions
+      assistantPanel.offsetHeight;
+      assistantPanel.style.animation = '';
+    }
+  }
+
+  if (document.body) {
+    document.body.classList.toggle('quiz-assistant-locked', isOpen);
+  }
+
+  if (chatbotFab) {
+    chatbotFab.classList.toggle('active', isOpen);
+    chatbotFab.setAttribute('aria-pressed', String(isOpen));
+    chatbotFab.setAttribute('aria-label', isOpen ? 'Close assistant' : 'Open assistant');
+    chatbotFab.setAttribute('title', isOpen ? 'Close assistant' : 'Open assistant');
+  }
+
+  if (assistantInput) {
+    assistantInput.disabled = !isOpen || quizAssistantState.isLoading;
+  }
+
+  if (assistantSendBtn) {
+    assistantSendBtn.disabled = !isOpen || quizAssistantState.isLoading;
+  }
+  if (assistantFillBtn) {
+    assistantFillBtn.disabled = !isOpen
+      || quizAssistantState.isLoading
+      || !quizAssistantState.pendingQuestions.length;
+  }
+
+  if (isOpen && assistantInput && !quizAssistantState.isLoading) {
+    setTimeout(() => assistantInput.focus(), 50);
+  }
+
+  renderQuizAssistantMessages();
+}
+
+let __aiSettingsSnapshot = null;
+
+function formatAISettingsForSave(formState) {
+  return {
+    AI_PROVIDER: (formState.AI_PROVIDER || '').trim(),
+    OPENAI_API_KEY: (formState.OPENAI_API_KEY || '').trim(),
+    OPENAI_MODEL: (formState.OPENAI_MODEL || '').trim(),
+    GOOGLE_API_KEY: (formState.GOOGLE_API_KEY || '').trim(),
+    GEMINI_MODEL: (formState.GEMINI_MODEL || '').trim(),
+    AI_TEMPERATURE: Number.isFinite(Number(formState.AI_TEMPERATURE))
+      ? String(Number(formState.AI_TEMPERATURE))
+      : '0.6',
+    AI_MAX_TOKENS: Number.isFinite(Number(formState.AI_MAX_TOKENS)) && Number(formState.AI_MAX_TOKENS) > 0
+      ? String(Math.floor(Number(formState.AI_MAX_TOKENS)))
+      : '1400'
+  };
+}
+
+function readAISettingsForm() {
+  return {
+    AI_PROVIDER: document.getElementById('ai-provider-select').value,
+    OPENAI_API_KEY: document.getElementById('ai-openai-key').value,
+    OPENAI_MODEL: document.getElementById('ai-openai-model').value,
+    GOOGLE_API_KEY: document.getElementById('ai-gemini-key').value,
+    GEMINI_MODEL: document.getElementById('ai-gemini-model').value,
+    AI_TEMPERATURE: document.getElementById('ai-temperature').value,
+    AI_MAX_TOKENS: document.getElementById('ai-max-tokens').value
+  };
+}
+
+function writeAISettingsForm(settings) {
+  document.getElementById('ai-provider-select').value = settings.AI_PROVIDER || '';
+  document.getElementById('ai-openai-key').value = settings.OPENAI_API_KEY || '';
+  document.getElementById('ai-openai-model').value = settings.OPENAI_MODEL || 'gpt-4.1-mini';
+  document.getElementById('ai-gemini-key').value = settings.GOOGLE_API_KEY || '';
+  document.getElementById('ai-gemini-model').value = settings.GEMINI_MODEL || 'gemini-3.5-flash';
+  const temp = Number(settings.AI_TEMPERATURE);
+  const tempInput = document.getElementById('ai-temperature');
+  tempInput.value = Number.isFinite(temp) ? String(temp) : '0.6';
+  document.getElementById('ai-temperature-value').textContent = tempInput.value;
+  const maxTokens = Number(settings.AI_MAX_TOKENS);
+  document.getElementById('ai-max-tokens').value = Number.isFinite(maxTokens) && maxTokens > 0 ? String(Math.floor(maxTokens)) : '1400';
+}
+
+function openAISettingsModal() {
+  const overlay = document.getElementById('ai-settings-overlay');
+  if (!overlay) return;
+  if (typeof ipcRenderer !== 'undefined' && ipcRenderer.invoke) {
+    ipcRenderer.invoke('ai:getSettings')
+      .then((settings) => {
+        __aiSettingsSnapshot = formatAISettingsForSave(settings || {});
+        writeAISettingsForm(settings || {});
+      })
+      .catch(() => {
+        __aiSettingsSnapshot = formatAISettingsForSave({});
+        writeAISettingsForm({});
+      });
+  } else {
+    __aiSettingsSnapshot = formatAISettingsForSave({});
+    writeAISettingsForm({});
+  }
+  overlay.classList.add('active');
+  overlay.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('quiz-assistant-locked');
+}
+
+function closeAISettingsModal() {
+  const overlay = document.getElementById('ai-settings-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('active');
+  overlay.setAttribute('aria-hidden', 'true');
+  const assistantOverlay = document.getElementById('quiz-assistant-overlay');
+  if (!assistantOverlay || !assistantOverlay.classList.contains('active')) {
+    document.body.classList.remove('quiz-assistant-locked');
+  }
+  __aiSettingsSnapshot = null;
+}
+
+async function saveAISettingsFromModal() {
+  if (typeof ipcRenderer === 'undefined' || !ipcRenderer.invoke) {
+    closeAISettingsModal();
+    return;
+  }
+  const formState = readAISettingsForm();
+  const payload = formatAISettingsForSave(formState);
+  try {
+    await ipcRenderer.invoke('ai:saveSettings', payload);
+    __aiSettingsSnapshot = payload;
+  } catch (_err) {
+    // ignore
+  }
+  closeAISettingsModal();
+}
+
+function discardAISettingsChanges() {
+  if (__aiSettingsSnapshot) {
+    writeAISettingsForm({
+      AI_PROVIDER: __aiSettingsSnapshot.AI_PROVIDER,
+      OPENAI_API_KEY: __aiSettingsSnapshot.OPENAI_API_KEY,
+      OPENAI_MODEL: __aiSettingsSnapshot.OPENAI_MODEL,
+      GOOGLE_API_KEY: __aiSettingsSnapshot.GOOGLE_API_KEY,
+      GEMINI_MODEL: __aiSettingsSnapshot.GEMINI_MODEL,
+      AI_TEMPERATURE: __aiSettingsSnapshot.AI_TEMPERATURE,
+      AI_MAX_TOKENS: __aiSettingsSnapshot.AI_MAX_TOKENS
+    });
+  }
+  closeAISettingsModal();
+}
+
+function setupAISettingsModal() {
+  const settingsBtn = document.getElementById('quiz-assistant-settings-btn');
+  const closeBtn = document.getElementById('ai-settings-close-btn');
+  const overlay = document.getElementById('ai-settings-overlay');
+  const saveBtn = document.getElementById('ai-settings-save-btn');
+  const discardBtn = document.getElementById('ai-settings-discard-btn');
+  const tempInput = document.getElementById('ai-temperature');
+  const tempValue = document.getElementById('ai-temperature-value');
+
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', openAISettingsModal);
+  }
+  if (closeBtn) {
+    closeBtn.addEventListener('click', closeAISettingsModal);
+  }
+  if (saveBtn) {
+    saveBtn.addEventListener('click', saveAISettingsFromModal);
+  }
+  if (discardBtn) {
+    discardBtn.addEventListener('click', discardAISettingsChanges);
+  }
+  if (overlay) {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeAISettingsModal();
+    });
+  }
+  if (tempInput && tempValue) {
+    tempInput.addEventListener('input', () => {
+      tempValue.textContent = tempInput.value;
+    });
+  }
+
+  if (!window.__aiSettingsModalEscapeBound) {
+    document.addEventListener('keydown', (e) => {
+      const o = document.getElementById('ai-settings-overlay');
+      if (e.key === 'Escape' && o && o.classList.contains('active')) {
+        discardAISettingsChanges();
+      }
+    });
+    window.__aiSettingsModalEscapeBound = true;
+  }
+}
+
+function formatFileSize(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function getFileIconSvg(mimeType) {
+  if (mimeType && mimeType.startsWith('image/')) {
+    return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>`;
+  }
+  if (mimeType && mimeType === 'application/pdf') {
+    return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>`;
+  }
+  if (mimeType && (mimeType.includes('csv') || mimeType.includes('json') || mimeType.includes('text'))) {
+    return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="9" y1="15" x2="15" y2="15"></line></svg>`;
+  }
+  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>`;
+}
+
+function renderQuizAssistantMessages() {
+  const messagesEl = document.getElementById('quiz-assistant-messages');
+  if (!messagesEl) return;
+
+  if (!quizAssistantState.messages.length) {
+    messagesEl.innerHTML = '';
+    return;
+  }
+
+  const historyHtml = quizAssistantState.messages.map((message) => {
+    const role = message.role === 'user' ? 'user' : 'assistant';
+    
+    let attachmentsHtml = '';
+    if (message.attachments && message.attachments.length > 0) {
+      attachmentsHtml = '<div class="msg-attachments">';
+      message.attachments.forEach((att) => {
+        if (att.type === 'image' && att.dataUrl) {
+          attachmentsHtml += `
+            <div class="msg-file">
+              <div class="file-icon">${getFileIconSvg('image/*')}</div>
+              <div style="flex:1; min-width:0;">
+                <div class="file-name">${escapeHtml(att.name || 'Image')}</div>
+                <div class="file-size">${formatFileSize(att.size || 0)}</div>
+              </div>
+            </div>
+            <div style="border-radius: 8px; overflow: hidden;">
+              <img src="${att.dataUrl}" style="max-width: 200px; max-height: 200px; display: block; border-radius: 8px;">
+            </div>
+          `;
+        } else {
+          attachmentsHtml += `
+            <div class="msg-file">
+              <div class="file-icon">${getFileIconSvg(att.mimeType)}</div>
+              <div style="flex:1; min-width:0;">
+                <div class="file-name">${escapeHtml(att.name || 'File')}</div>
+                <div class="file-size">${formatFileSize(att.size || 0)}${att.textPreview ? ' • ' + escapeHtml(att.textPreview) : ''}</div>
+              </div>
+            </div>
+          `;
+        }
+      });
+      attachmentsHtml += '</div>';
+    }
+    
+    let svgHtml = '';
+    if (message.svgContent && message.svgContent.trim()) {
+      const svgId = 'msg-svg-' + Math.random().toString(36).slice(2, 10);
+      const safeSvg = escapeHtml(message.svgContent);
+      svgHtml = `
+        <div class="msg-svg-container" id="${svgId}-wrap">
+          <div class="msg-svg-render">
+            ${message.svgContent}
+          </div>
+          <div class="msg-svg-actions">
+            <button type="button" class="btn btn-secondary msg-svg-action" data-svg-action="download" data-svg-id="${svgId}" title="Download as .svg file">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <span>Download SVG</span>
+            </button>
+            <button type="button" class="btn btn-secondary msg-svg-action" data-svg-action="copy" data-svg-id="${svgId}" title="Copy SVG markup">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              <span>Copy</span>
+            </button>
+          </div>
+          <textarea id="${svgId}-source" style="display:none;">${safeSvg}</textarea>
+        </div>
+      `;
+    }
+    
+    const contentHtml = message.content ? escapeHtml(message.content) : '';
+    
+    return `<div class="assistant-message ${role}">${contentHtml}${attachmentsHtml}${svgHtml}</div>`;
+  }).join('');
+
+  const loadingHtml = quizAssistantState.isLoading
+    ? '<div class="assistant-message assistant loading">Thinking...</div>'
+    : '';
+
+  messagesEl.innerHTML = historyHtml + loadingHtml;
+
+  // Wire up SVG action buttons after inserting HTML
+  messagesEl.querySelectorAll('.msg-svg-action').forEach(btn => {
+    btn.addEventListener('click', () => handleSvgAction(btn));
+  });
+
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function resetQuizAssistantConversation() {
+  quizAssistantState.messages = [];
+  quizAssistantState.isLoading = false;
+  quizAssistantState.pendingQuestions = [];
+  quizAssistantState.pendingAttachments = [];
+
+  const assistantInput = document.getElementById('quiz-assistant-input');
+  if (assistantInput) {
+    assistantInput.value = '';
+  }
+
+  renderAttachmentPreview();
+  renderQuizAssistantMessages();
+  setQuizCreateMode(quizAssistantState.mode);
+}
+
+function renderAttachmentPreview() {
+  const previewEl = document.getElementById('quiz-assistant-attachments');
+  if (!previewEl) return;
+  
+  const atts = quizAssistantState.pendingAttachments;
+  if (!atts.length) {
+    previewEl.classList.remove('has-files');
+    previewEl.innerHTML = '';
+    return;
+  }
+  
+  previewEl.classList.add('has-files');
+  previewEl.innerHTML = atts.map((att, idx) => {
+    if (att.type === 'image' && att.dataUrl) {
+      return `
+        <div class="assistant-attachment-chip image-thumb">
+          <img src="${att.dataUrl}" alt="">
+          <div class="attach-info">
+            <span class="attach-name">${escapeHtml(att.name)}</span>
+            <span class="attach-size">${formatFileSize(att.size)}</span>
+          </div>
+          <button type="button" class="attach-remove" data-idx="${idx}" title="Remove">×</button>
+        </div>
+      `;
+    }
+    return `
+      <div class="assistant-attachment-chip">
+        <span class="attach-icon">${getFileIconSvg(att.mimeType)}</span>
+        <span class="attach-name">${escapeHtml(att.name)}</span>
+        <span class="attach-size">${formatFileSize(att.size)}</span>
+        <button type="button" class="attach-remove" data-idx="${idx}" title="Remove">×</button>
+      </div>
+    `;
+  }).join('');
+  
+  previewEl.querySelectorAll('.attach-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      if (!isNaN(idx)) {
+        quizAssistantState.pendingAttachments.splice(idx, 1);
+        renderAttachmentPreview();
+      }
+    });
+  });
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
+async function handleAssistantFileSelect(event) {
+  const files = event.target.files;
+  if (!files || !files.length) return;
+  
+  const MAX_SIZE = 10 * 1024 * 1024; // 10MB per file
+  const TEXT_TYPES = ['.txt', '.csv', '.json', '.md', '.html', '.xml'];
+  
+  for (const file of Array.from(files)) {
+    if (file.size > MAX_SIZE) {
+      await window.showAlert(`File "${file.name}" is too large. Maximum size is 10MB.`);
+      continue;
+    }
+    
+    const isImage = file.type && file.type.startsWith('image/');
+    const isText = file.type && (file.type.startsWith('text/') || file.type === 'application/json' || file.type.includes('csv'));
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    const isTextByExt = TEXT_TYPES.includes(ext);
+    
+    const att = {
+      name: file.name,
+      size: file.size,
+      mimeType: file.type || 'application/octet-stream',
+      type: isImage ? 'image' : 'file'
+    };
+    
+    try {
+      if (isImage) {
+        att.dataUrl = await readFileAsDataUrl(file);
+      } else if (isText || isTextByExt) {
+        att.text = await readFileAsText(file);
+        const preview = att.text.slice(0, 200);
+        att.textPreview = preview.length < att.text.length ? preview + '...' : preview;
+      } else {
+        const buffer = await readFileAsDataUrl(file);
+        att.dataUrl = buffer;
+      }
+    } catch (err) {
+      console.error('Error reading file:', file.name, err);
+      continue;
+    }
+    
+    quizAssistantState.pendingAttachments.push(att);
+  }
+  
+  event.target.value = '';
+  renderAttachmentPreview();
+}
+
+function handleSvgAction(btn) {
+  const action = btn.dataset.svgAction;
+  const svgId = btn.dataset.svgId;
+  if (!svgId) return;
+
+  const sourceEl = document.getElementById(svgId + '-source');
+  const svgRaw = sourceEl ? sourceEl.value : '';
+  if (!svgRaw) {
+    window.showAlert && window.showAlert('SVG markup is missing.');
+    return;
+  }
+
+  if (action === 'copy') {
+    navigator.clipboard.writeText(svgRaw).then(() => {
+      const originalHTML = btn.innerHTML;
+      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg><span>Copied!</span>`;
+      btn.classList.add('btn-success');
+      setTimeout(() => {
+        btn.innerHTML = originalHTML;
+        btn.classList.remove('btn-success');
+      }, 1400);
+    }).catch(() => {
+      window.showAlert && window.showAlert('Could not copy SVG. Try selecting and copying it manually.');
+    });
+  } else if (action === 'download') {
+    const blob = new Blob([svgRaw], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    a.href = url;
+    a.download = `diagram-${stamp}.svg`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+}
+
+async function generateAssistantSvgViaLLM(prompt, imageSizeLabel) {
+  if (!prompt.trim()) {
+    await window.showAlert('Please enter a description for the diagram/SVG.');
+    return;
+  }
+
+  const userMsg = `[Generate a vector SVG diagram] ${prompt}` +
+    (imageSizeLabel ? ` (Preferred style/size context: ${imageSizeLabel})` : '');
+
+  quizAssistantState.messages.push({
+    role: 'user',
+    content: userMsg
+  });
+  closeImageGenModal();
+  setQuizAssistantLoading(true);
+
+  try {
+    const response = await ipcRenderer.invoke('ai:generateQuizQuestions', {
+      conversation: quizAssistantState.messages,
+      attachments: [],
+      quizContext: {
+        title: document.getElementById('new-quiz-title').value.trim(),
+        durationMinutes: document.getElementById('new-quiz-duration').value.trim(),
+        semester: document.getElementById('new-quiz-semester').value.trim(),
+        session: document.getElementById('new-quiz-session').value.trim()
+      },
+      currentQuestions: getCurrentQuestionDrafts()
+    });
+
+    const svgRaw = response && typeof response.svgContent === 'string' ? response.svgContent.trim() : '';
+
+    if (svgRaw) {
+      quizAssistantState.messages.push({
+        role: 'assistant',
+        content: coerceAssistantText(response && response.assistantMessage)
+          || 'Here is the SVG diagram based on your description.',
+        svgContent: svgRaw
+      });
+    } else {
+      quizAssistantState.messages.push({
+        role: 'assistant',
+        content: coerceAssistantText(response && response.assistantMessage)
+          || 'I could not generate the SVG markup. Try a different description and I can build it for you.'
+      });
+    }
+  } catch (err) {
+    const message = err && err.message ? err.message : 'Unknown error';
+    quizAssistantState.messages.push({
+      role: 'assistant',
+      content: `I could not generate the SVG diagram: ${message}`
+    });
+  } finally {
+    setQuizAssistantLoading(false);
+  }
+}
+
+function setQuizAssistantLoading(isLoading) {
+  quizAssistantState.isLoading = isLoading;
+
+  const assistantInput = document.getElementById('quiz-assistant-input');
+  const assistantSendBtn = document.getElementById('quiz-assistant-send-btn');
+  const assistantFillBtn = document.getElementById('quiz-assistant-fill-btn');
+  const assistantResetBtn = document.getElementById('quiz-assistant-reset-btn');
+
+  if (assistantInput) {
+    assistantInput.disabled = isLoading || quizAssistantState.mode !== 'chatbot';
+  }
+  if (assistantSendBtn) {
+    assistantSendBtn.disabled = isLoading || quizAssistantState.mode !== 'chatbot';
+  }
+  if (assistantFillBtn) {
+    assistantFillBtn.disabled = isLoading
+      || quizAssistantState.mode !== 'chatbot'
+      || !quizAssistantState.pendingQuestions.length;
+  }
+  if (assistantResetBtn) {
+    assistantResetBtn.disabled = isLoading;
+  }
+
+  renderQuizAssistantMessages();
+}
+
+function coerceAssistantText(value) {
+  return String(value == null ? '' : value).trim();
+}
+
+function normalizeCorrectOption(value, options = []) {
+  const normalized = String(value == null ? '' : value).trim().toLowerCase();
+  if (['a', 'b', 'c', 'd'].includes(normalized)) return normalized;
+  if (['1', '2', '3', '4'].includes(normalized)) return ['a', 'b', 'c', 'd'][parseInt(normalized, 10) - 1];
+
+  const optionMatch = normalized.match(/^(?:option\s*)?([abcd])$/i);
+  if (optionMatch) return optionMatch[1].toLowerCase();
+
+  const normalizedOptions = options.map((option) => coerceAssistantText(option).toLowerCase());
+  const matchingIndex = normalizedOptions.findIndex((option) => option && option === normalized);
+  if (matchingIndex >= 0) return ['a', 'b', 'c', 'd'][matchingIndex];
+
+  return 'a';
+}
+
+function getCurrentQuestionDrafts() {
+  return Array.from(document.querySelectorAll('.question-item')).map((item, index) => ({
+    text: item.querySelector('.q-text').value.trim(),
+    opt_a: item.querySelector('.q-opt-a').value.trim(),
+    opt_b: item.querySelector('.q-opt-b').value.trim(),
+    opt_c: item.querySelector('.q-opt-c').value.trim(),
+    opt_d: item.querySelector('.q-opt-d').value.trim(),
+    correct_opt: item.querySelector(`input[name="correct-${index}"]:checked`)?.value || 'a'
+  })).filter((question) => question.text || question.opt_a || question.opt_b || question.opt_c || question.opt_d);
+}
+
+function normalizeGeneratedQuestions(generatedQuestions) {
+  if (!Array.isArray(generatedQuestions)) {
+    throw new Error('The chatbot did not return a valid list of questions.');
+  }
+
+  const normalizedQuestions = generatedQuestions.map((question, index) => {
+    const text = coerceAssistantText(question && question.text).slice(0, 500);
+    if (!text) return null;
+
+    const rawOptions = Array.isArray(question.options)
+      ? question.options
+      : [question.opt_a, question.opt_b, question.opt_c, question.opt_d];
+    const options = rawOptions.slice(0, 4).map((option) => coerceAssistantText(option).slice(0, 200));
+
+    if (options.length !== 4 || options.some((option) => !option)) {
+      throw new Error(`Question ${index + 1} is missing one or more options.`);
+    }
+
+    return {
+      text,
+      opt_a: options[0],
+      opt_b: options[1],
+      opt_c: options[2],
+      opt_d: options[3],
+      correct_opt: normalizeCorrectOption(
+        question.correctOption || question.correct_opt || question.answer,
+        options
+      )
+    };
+  }).filter(Boolean);
+
+  if (!normalizedQuestions.length) {
+    throw new Error('The chatbot did not return any complete questions.');
+  }
+
+  return normalizedQuestions;
+}
+
+function formatGeneratedQuestionsPreview(generatedQuestions) {
+  return generatedQuestions.map((question, index) => [
+    `${index + 1}. ${question.text}`,
+    `A. ${question.opt_a}`,
+    `B. ${question.opt_b}`,
+    `C. ${question.opt_c}`,
+    `D. ${question.opt_d}`,
+    `Answer: ${String(question.correct_opt || '').toUpperCase()}`
+  ].join('\n')).join('\n\n');
+}
+
+function buildGeneratedQuestionsReviewMessage(summary, generatedQuestions) {
+  const header = coerceAssistantText(summary) || `I generated ${generatedQuestions.length} questions for you to review.`;
+  return [
+    header,
+    '',
+    'Review them below, then click "Fill Questions" when you are ready.',
+    '',
+    formatGeneratedQuestionsPreview(generatedQuestions)
+  ].join('\n');
+}
+
+function fillQuizBuilderQuestions(generatedQuestions) {
+  const container = document.getElementById('questions-container');
+  if (!container) {
+    throw new Error('Questions container not found');
+  }
+
+  container.innerHTML = '';
+  generatedQuestions.forEach((question) => addQuestionUI(question));
+  reindexQuestions();
+}
+
+function fillQuizAssistantQuestions() {
+  if (quizAssistantState.mode !== 'chatbot' || quizAssistantState.isLoading) return;
+  if (!quizAssistantState.pendingQuestions.length) return;
+
+  fillQuizBuilderQuestions(quizAssistantState.pendingQuestions);
+  quizAssistantState.messages.push({
+    role: 'assistant',
+    content: `Filled ${quizAssistantState.pendingQuestions.length} questions into the form.`
+  });
+  renderQuizAssistantMessages();
+}
+
+async function sendQuizAssistantPrompt() {
+  if (quizAssistantState.mode !== 'chatbot' || quizAssistantState.isLoading) return;
+
+  const assistantInput = document.getElementById('quiz-assistant-input');
+  if (!assistantInput) return;
+
+  const prompt = assistantInput.value.trim();
+  const hasAttachments = quizAssistantState.pendingAttachments.length > 0;
+  
+  if (!prompt && !hasAttachments) {
+    await window.showAlert('Type a question, describe the quiz questions, or attach files.');
+    return;
+  }
+
+  const attachmentsForMessage = hasAttachments
+    ? quizAssistantState.pendingAttachments.map(att => ({
+        name: att.name,
+        size: att.size,
+        mimeType: att.mimeType,
+        type: att.type,
+        dataUrl: att.dataUrl,
+        text: att.text,
+        textPreview: att.textPreview
+      }))
+    : [];
+
+  quizAssistantState.messages.push({
+    role: 'user',
+    content: prompt,
+    attachments: attachmentsForMessage.length ? attachmentsForMessage : undefined
+  });
+  assistantInput.value = '';
+  const sentAttachments = [...quizAssistantState.pendingAttachments];
+  quizAssistantState.pendingAttachments = [];
+  renderAttachmentPreview();
+  setQuizAssistantLoading(true);
+
+  try {
+    const response = await ipcRenderer.invoke('ai:generateQuizQuestions', {
+      conversation: quizAssistantState.messages,
+      attachments: sentAttachments.map(att => ({
+        name: att.name,
+        size: att.size,
+        mimeType: att.mimeType,
+        type: att.type,
+        dataUrl: att.dataUrl,
+        text: att.text
+      })),
+      quizContext: {
+        title: document.getElementById('new-quiz-title').value.trim(),
+        durationMinutes: document.getElementById('new-quiz-duration').value.trim(),
+        semester: document.getElementById('new-quiz-semester').value.trim(),
+        session: document.getElementById('new-quiz-session').value.trim()
+      },
+      currentQuestions: getCurrentQuestionDrafts()
+    });
+
+    if (Array.isArray(response && response.questions) && response.questions.length) {
+      const normalizedQuestions = normalizeGeneratedQuestions(response.questions);
+      quizAssistantState.pendingQuestions = normalizedQuestions;
+
+      quizAssistantState.messages.push({
+        role: 'assistant',
+        content: buildGeneratedQuestionsReviewMessage(
+          response && response.assistantMessage,
+          normalizedQuestions
+        ),
+        svgContent: response && response.svgContent ? response.svgContent : null
+      });
+    } else {
+      quizAssistantState.messages.push({
+        role: 'assistant',
+        content: coerceAssistantText(response && response.assistantMessage)
+          || 'I could not find a useful reply just now.',
+        svgContent: response && response.svgContent ? response.svgContent : null
+      });
+    }
+  } catch (err) {
+    const message = err && err.message ? err.message : 'Unknown error';
+    quizAssistantState.messages.push({
+      role: 'assistant',
+      content: `I could not update the quiz yet: ${message}`
+    });
+    await window.showAlert(`Chatbot error: ${message}`);
+  } finally {
+    setQuizAssistantLoading(false);
+  }
+}
+
 // Helper function to ensure all form inputs are interactive
 function ensureFormInputsActive() {
-  const inputs = document.querySelectorAll('.question-item input[type="text"], #new-quiz-title, #new-quiz-duration, #new-quiz-semester, #new-quiz-session');
+  const inputs = document.querySelectorAll('.question-item input[type="text"], #new-quiz-title, #new-quiz-duration, #new-quiz-semester, #new-quiz-session, #quiz-assistant-input');
   inputs.forEach(input => {
     // Ensure inputs are not blocked by any overlay
     input.style.pointerEvents = 'auto';
@@ -1968,6 +2821,8 @@ async function saveQuiz() {
     document.getElementById('new-quiz-duration').value = '5';
     document.getElementById('questions-container').innerHTML = '';
     addQuestionUI();
+    resetQuizAssistantConversation();
+    setQuizCreateMode('manual');
     loadQuizzes();
     window.switchView('dashboard');
   } catch (err) {

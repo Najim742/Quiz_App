@@ -298,9 +298,16 @@ function renderQuestions() {
   sessionData.questions.forEach((q, index) => {
     const qCard = document.createElement('div');
     qCard.className = 'question-card';
+    let imgStyle = '';
+    if (q.image_width || q.image_height) {
+      const parts = [];
+      if (q.image_width) parts.push(`max-width: ${q.image_width};`);
+      if (q.image_height) parts.push(`max-height: ${q.image_height};`);
+      imgStyle = ` style="${parts.join(' ')}"`;
+    }
     qCard.innerHTML = `
       <div class="q-text">${index + 1}. ${q.text}</div>
-      ${q.image ? `<img src="${q.image}" style="width: ${q.image_width || '100%'}; height: ${q.image_height || '300px'}; object-fit: contain; border-radius: 8px; margin: 12px 0;">` : ''}
+      ${q.image ? `<img src="${q.image}" class="question-image"${imgStyle}>` : ''}
       <div class="options-list">
         <label class="option-label">
           <input type="radio" name="q-${q.id}" value="a" onchange="recordAnswer(${q.id}, 'a')">
@@ -437,11 +444,19 @@ function renderAnswers(questions) {
     const studentAnswer = answers[q.id];
     const isCorrect = studentAnswer === q.correct_opt;
     
+    let imgStyle = '';
+    if (q.image_width || q.image_height) {
+      const parts = [];
+      if (q.image_width) parts.push(`max-width: ${q.image_width};`);
+      if (q.image_height) parts.push(`max-height: ${q.image_height};`);
+      imgStyle = ` style="${parts.join(' ')}"`;
+    }
+    
     const qCard = document.createElement('div');
     qCard.className = 'question-card';
     qCard.innerHTML = `
       <div class="q-text" style="margin-bottom: 12px;">${i + 1}. ${q.text}</div>
-      ${q.image ? `<img src="${q.image}" style="width: ${q.image_width || '100%'}; height: ${q.image_height || '300px'}; object-fit: contain; border-radius: 8px; margin: 12px 0;">` : ''}
+      ${q.image ? `<img src="${q.image}" class="question-image"${imgStyle}>` : ''}
       <div class="options-list" style="margin-bottom: 12px;">
         <label class="option-label" style="background: ${q.correct_opt === 'a' ? 'var(--success-bg)' : (studentAnswer === 'a' ? 'var(--danger-bg)' : 'transparent')};">
           <span class="option-text">A. ${q.opt_a}</span>

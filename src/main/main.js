@@ -4,6 +4,13 @@ const fs = require('fs');
 const { startServer, stopServer } = require('../server/server');
 const os = require('os');
 const { dbApi, initDb } = require('../server/db');
+const {
+  generateQuizAssistantResponse,
+  loadAISettings,
+  saveAISettings,
+  getAllAISettings,
+  setRuntimeSettingsFilePath
+} = require('../server/quizAssistant');
 
 let mainWindow;
 let isServerRunning = false;
@@ -43,6 +50,11 @@ app.whenReady().then(async () => {
   try {
     // Initialize database first
     await initDb();
+
+    // Initialize AI settings inside Electron userData directory
+    const aiSettingsPath = path.join(app.getPath('userData'), 'ai-settings.json');
+    setRuntimeSettingsFilePath(aiSettingsPath);
+    loadAISettings();
     
     // DO NOT start server on app launch (default to OFF)
     isServerRunning = false;
@@ -82,6 +94,19 @@ app.whenReady().then(async () => {
     
     ipcMain.handle('db:createQuiz', async (_, title, duration, semester, session) => {
       return await dbApi.createQuiz(title, duration, semester, session);
+    });
+
+    ipcMain.handle('ai:generateQuizQuestions', async (_, payload) => {
+      return await generateQuizAssistantResponse(payload);
+    });
+
+    // IPC handlers for AI settings (stored in Electron userData dir)
+    ipcMain.handle('ai:getSettings', () => {
+      return getAllAISettings();
+    });
+
+    ipcMain.handle('ai:saveSettings', async (_, settings) => {
+      return saveAISettings(settings || {});
     });
     
     ipcMain.handle('db:deleteQuiz', async (_, id) => {

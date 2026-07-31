@@ -329,6 +329,18 @@ select {
   line-height: 1.5;
 }
 
+.question-image {
+  display: block;
+  max-width: 100%;
+  width: 100%;
+  max-height: 50vh;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+  margin: 12px 0;
+  overflow: hidden;
+}
+
 .options-list {
   display: flex;
   flex-direction: column;
@@ -429,6 +441,10 @@ select {
     padding: 24px 16px;
   }
   
+  .question-image {
+    max-height: 45vh;
+  }
+  
   .score-box h1 {
     font-size: 3rem;
   }
@@ -462,6 +478,10 @@ select {
   
   .option-text {
     font-size: 1rem;
+  }
+  
+  .question-image {
+    max-height: 40vh;
   }
 }
 
